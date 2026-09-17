@@ -3400,7 +3400,17 @@
                 if (!skipUpdateTransform) {
                     displayObject.updateTransform();
                 }
+                /* Register the target so a filtered node inside the tree
+                   (every Scene_Base has a ColorFilter) composites back into
+                   this texture rather than onto the screen. */
+                _fboStack.push({ fbo: fbo, w: w, h: h });
                 displayObject.render(this);
+                for (var si = _fboStack.length - 1; si >= 0; si--) {
+                    if (_fboStack[si].fbo === fbo) {
+                        _fboStack.splice(si, 1);
+                        break;
+                    }
+                }
 
                 __native_renderer.endFrame();
                 __native_renderer.unbindRenderTexture();
@@ -4459,14 +4469,17 @@
 
     BlurFilter.prototype.apply = function(renderer, inputTexture, outputW, outputH) {
         if (typeof __native_filters === "undefined" || !inputTexture) return;
-        if (this._strength <= 0) return;
 
         var shader = __native_filters.blurShader;
         if (!shader) return;
 
-        /* Multi-pass: horizontal then vertical, repeated for quality. */
-        var passes = Math.max(1, this.quality);
-        var strength = this._strength / passes;
+        /* Multi-pass: horizontal then vertical, repeated for quality. A blur
+           of 0 still has to copy the input through: the caller's output FBO
+           starts cleared, and skipping it would draw the object as nothing
+           (Scene_MenuBase backgrounds keep a BlurFilter at blur 0 in some
+           games). */
+        var passes = this._strength > 0 ? Math.max(1, this.quality) : 0;
+        var strength = passes > 0 ? this._strength / passes : 0;
         var currentTex = inputTexture;
         var pooledRTs = [];
 
