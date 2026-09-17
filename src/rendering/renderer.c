@@ -109,6 +109,20 @@ void renderer_set_screen_viewport(Renderer *r, int x, int y, int w, int h)
     }
 }
 
+#ifdef RMMZ_HAS_GL
+/* Clear the whole target even while a scissor is active. A filter pass may
+   start inside a scissor-clipped window; if its (pooled) framebuffer were
+   only cleared within the clip, stale pixels from an earlier pass would be
+   composited back over the screen. */
+static void clear_unscissored(void)
+{
+    GLboolean scissored = glIsEnabled(GL_SCISSOR_TEST);
+    if (scissored) glDisable(GL_SCISSOR_TEST);
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (scissored) glEnable(GL_SCISSOR_TEST);
+}
+#endif
+
 void renderer_begin_frame(Renderer *r)
 {
     if (!r) return;
@@ -118,7 +132,7 @@ void renderer_begin_frame(Renderer *r)
     if (r->bound_fbo == 0) {
         glViewport(r->vp_x, r->vp_y, r->vp_w, r->vp_h);
     }
-    glClear(GL_COLOR_BUFFER_BIT);
+    clear_unscissored();
 #endif
 
     sprite_batch_begin(r->batch);
@@ -133,7 +147,7 @@ void renderer_begin_frame_transparent(Renderer *r)
         glViewport(r->vp_x, r->vp_y, r->vp_w, r->vp_h);
     }
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    clear_unscissored();
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 #endif
 
