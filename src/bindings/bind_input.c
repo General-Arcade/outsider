@@ -24,9 +24,14 @@ static JSValue input_event_to_js(JSContext *ctx, const InputEvent *ev)
         case INPUT_MOUSE_UP:   type_str = "mouseup";     break;
         case INPUT_MOUSE_MOVE: type_str = "mousemove";   break;
         case INPUT_WHEEL:      type_str = "wheel";       break;
+        case INPUT_TEXT:       type_str = "textinput";   break;
         default:               type_str = "unknown";     break;
     }
     JS_SetPropertyStr(ctx, obj, "type", JS_NewString(ctx, type_str));
+
+    if (ev->type == INPUT_TEXT) {
+        JS_SetPropertyStr(ctx, obj, "text", JS_NewString(ctx, ev->key));
+    }
 
     /* Keyboard fields */
     if (ev->type == INPUT_KEY_DOWN || ev->type == INPUT_KEY_UP) {

@@ -203,6 +203,7 @@ third_party/              Dependency fetching (CMake FetchContent) + vendored st
 | `xhr_shim.js` | `XMLHttpRequest` over native file I/O |
 | `storage_shim.js` | `localStorage`, `localforage`, `require("fs")`, `require("path")`, `process` |
 | `font_shim.js` | `FontFace`, `document.fonts` |
+| `dom_overlay.js` | Draws HTML forms, inputs and buttons that plugins append to `document.body` (name-entry dialogs) and routes keyboard, text and mouse input to them |
 | `navigator_shim.js` | `navigator`, `getGamepads()`, `screen` |
 | `plugin_compat.js` | `fetch()`, PIXI filter stubs, Steam stubs, polyfills |
 | `effekseer_shim.js` | `effekseer` context API over the native backend |

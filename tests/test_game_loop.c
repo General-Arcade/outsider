@@ -225,8 +225,8 @@ TEST(load_order_without_plugins)
     size_t count = 0;
     char **order = script_loader_get_load_order("src/shims", game_dir, &count);
     ASSERT(order != NULL);
-    /* 10 shims + 1 lib + 6 core + 1 post-core shim + 1 main.js = 19 */
-    ASSERT(count == 19);
+    /* 11 shims + 1 lib + 6 core + 1 post-core shim + 1 main.js = 20 */
+    ASSERT(count == 20);
 
     /* Shims first */
     ASSERT(strstr(order[0], "dom_shim.js") != NULL);
@@ -238,21 +238,22 @@ TEST(load_order_without_plugins)
     ASSERT(strstr(order[6], "pixi_shim.js") != NULL);
     ASSERT(strstr(order[7], "webaudio_shim.js") != NULL);
     ASSERT(strstr(order[8], "effekseer_shim.js") != NULL);
-    ASSERT(strstr(order[9], "plugin_compat.js") != NULL);
+    ASSERT(strstr(order[9], "dom_overlay.js") != NULL);
+    ASSERT(strstr(order[10], "plugin_compat.js") != NULL);
 
     /* Then libs, core scripts, post-core shims, main.js */
-    ASSERT(strstr(order[10], "pako.min.js") != NULL);
+    ASSERT(strstr(order[11], "pako.min.js") != NULL);
 
-    ASSERT(strstr(order[11], "rmmz_core.js") != NULL);
-    ASSERT(strstr(order[12], "rmmz_managers.js") != NULL);
-    ASSERT(strstr(order[13], "rmmz_objects.js") != NULL);
-    ASSERT(strstr(order[14], "rmmz_scenes.js") != NULL);
-    ASSERT(strstr(order[15], "rmmz_sprites.js") != NULL);
-    ASSERT(strstr(order[16], "rmmz_windows.js") != NULL);
+    ASSERT(strstr(order[12], "rmmz_core.js") != NULL);
+    ASSERT(strstr(order[13], "rmmz_managers.js") != NULL);
+    ASSERT(strstr(order[14], "rmmz_objects.js") != NULL);
+    ASSERT(strstr(order[15], "rmmz_scenes.js") != NULL);
+    ASSERT(strstr(order[16], "rmmz_sprites.js") != NULL);
+    ASSERT(strstr(order[17], "rmmz_windows.js") != NULL);
 
-    ASSERT(strstr(order[17], "tilemap_shim.js") != NULL);
+    ASSERT(strstr(order[18], "tilemap_shim.js") != NULL);
 
-    ASSERT(strstr(order[18], "main.js") != NULL);
+    ASSERT(strstr(order[19], "main.js") != NULL);
 
     script_loader_free_path_list(order, count);
     PASS();
@@ -281,15 +282,15 @@ TEST(load_order_with_plugins)
     size_t count = 0;
     char **order = script_loader_get_load_order("src/shims", game_dir, &count);
     ASSERT(order != NULL);
-    /* 10 shims + 1 lib + 6 core + 1 post-core shim + 2 enabled plugins + 1 main = 21 */
-    ASSERT(count == 21);
+    /* 11 shims + 1 lib + 6 core + 1 post-core shim + 2 enabled plugins + 1 main = 22 */
+    ASSERT(count == 22);
 
     /* Post-core shims come after core, then enabled plugins, then main.js */
-    ASSERT(strstr(order[17], "tilemap_shim.js") != NULL);
+    ASSERT(strstr(order[18], "tilemap_shim.js") != NULL);
 
-    ASSERT(strstr(order[18], "Alpha.js") != NULL);
-    ASSERT(strstr(order[19], "Gamma.js") != NULL);  /* Beta is disabled */
-    ASSERT(strstr(order[20], "main.js") != NULL);
+    ASSERT(strstr(order[19], "Alpha.js") != NULL);
+    ASSERT(strstr(order[20], "Gamma.js") != NULL);  /* Beta is disabled */
+    ASSERT(strstr(order[21], "main.js") != NULL);
 
     script_loader_free_path_list(order, count);
     PASS();

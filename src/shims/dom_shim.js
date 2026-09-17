@@ -1744,6 +1744,13 @@
             var evt;
             var type = raw.type;
 
+            /* HTML overlay widgets (dom_overlay.js) get first pick: a focused
+               text input takes keyboard and text events, buttons take clicks. */
+            if (typeof __dom_overlay !== "undefined" && __dom_overlay.handleRawEvent(raw)) {
+                continue;
+            }
+            if (type === "textinput") continue;
+
             if (type === "keydown" || type === "keyup") {
                 evt = new KeyboardEvent(type, {
                     key: raw.key,

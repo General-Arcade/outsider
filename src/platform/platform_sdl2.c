@@ -274,6 +274,15 @@ static void process_key_event(const SDL_KeyboardEvent *kev, InputEventType type)
     input_manager_push_event(&ev);
 }
 
+static void process_text_input(const SDL_TextInputEvent *tev)
+{
+    InputEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = INPUT_TEXT;
+    strncpy(ev.key, tev->text, sizeof(ev.key) - 1);
+    input_manager_push_event(&ev);
+}
+
 static void process_mouse_button(const SDL_MouseButtonEvent *mev, InputEventType type)
 {
     InputEvent ev;
@@ -509,6 +518,10 @@ Platform *platform_init(const char *title, int width, int height)
         return NULL;
     }
 
+    /* Typed text (layout- and IME-aware) for HTML input overlays; key
+       events keep flowing regardless. */
+    SDL_StartTextInput();
+
     /* Windows' opengl32.dll exports only GL 1.1; newer entry points must be
        resolved from the driver at runtime. */
     if (gl_loader_init() != 0) {
@@ -570,6 +583,10 @@ bool platform_poll_events(Platform *p)
 
             case SDL_KEYUP:
                 process_key_event(&ev.key, INPUT_KEY_UP);
+                break;
+
+            case SDL_TEXTINPUT:
+                process_text_input(&ev.text);
                 break;
 
             case SDL_MOUSEBUTTONDOWN:

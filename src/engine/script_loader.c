@@ -236,6 +236,7 @@ static const char *SHIM_FILES[] = {
     "pixi_shim.js",
     "webaudio_shim.js",
     "effekseer_shim.js",
+    "dom_overlay.js",
     "plugin_compat.js",
     NULL
 };

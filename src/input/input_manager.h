@@ -24,6 +24,7 @@ typedef enum {
     INPUT_MOUSE_UP,
     INPUT_MOUSE_MOVE,
     INPUT_WHEEL,
+    INPUT_TEXT,         /* committed text from the OS (SDL_TEXTINPUT) */
 } InputEventType;
 
 /* Platform-independent input event with DOM-style field values
@@ -31,7 +32,8 @@ typedef enum {
 typedef struct {
     InputEventType type;
 
-    /* Keyboard (INPUT_KEY_DOWN / INPUT_KEY_UP) */
+    /* Keyboard (INPUT_KEY_DOWN / INPUT_KEY_UP); INPUT_TEXT carries the
+       typed UTF-8 text in `key` (layout- and IME-aware, unlike keyCode). */
     int  keyCode;       /* DOM keyCode */
     char key[32];       /* DOM key, e.g. "Enter", "a" */
     char code[32];      /* DOM code, e.g. "KeyA", "Space" */

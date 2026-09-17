@@ -897,6 +897,159 @@ TEST(test_shim_draw_canvas_to_canvas)
 
 /* Main */
 
+/* HTML overlay (dom_overlay.js): layout and input for plugin dialogs */
+
+static void js_setup_with_overlay(void)
+{
+    js_setup_with_shims();
+    js_engine_eval_file(_js, "src/shims/dom_overlay.js");
+    /* A dialog like InputDialog_Custom.js builds: form > label, input, buttons. */
+    js_engine_eval(_js,
+        "function makeDialog() {"
+        "  var form = document.createElement('form'); form.id = 'inputForm';"
+        "  var label = document.createElement('div'); label.innerText = 'Your name';"
+        "  var input = document.createElement('input'); input.id = 'textInput'; input.type = 'text'; input.value = 'Ann'; input.maxLength = 5;"
+        "  var row = document.createElement('div');"
+        "  var ok = document.createElement('button'); ok.innerText = 'OK'; ok.type = 'button';"
+        "  var cancel = document.createElement('button'); cancel.innerText = 'CANCEL'; cancel.type = 'button';"
+        "  form.style.position = 'absolute'; form.style.width = '330px'; form.style.padding = '20px';"
+        "  form.style.border = '3px solid #f1d2bd'; form.style.boxSizing = 'border-box';"
+        "  form.style.display = 'flex'; form.style.flexDirection = 'column'; form.style.alignItems = 'center';"
+        "  form.style.left = '50%'; form.style.top = '50%'; form.style.transform = 'translate(-50%, -50%)';"
+        "  label.style.fontSize = '24px'; label.style.marginBottom = '10px';"
+        "  input.style.width = '100%'; input.style.height = '50px'; input.style.border = '3px solid #fff'; input.style.padding = '5px'; input.style.boxSizing = 'border-box';"
+        "  row.style.display = 'flex'; row.style.justifyContent = 'space-around'; row.style.width = '100%'; row.style.margin = '15px 0 0 0';"
+        "  ok.style.width = '100px'; ok.style.height = '50px'; cancel.style.width = '100px'; cancel.style.height = '50px'; cancel.style.marginLeft = '10px';"
+        "  row.appendChild(ok); row.appendChild(cancel);"
+        "  form.appendChild(label); form.appendChild(input); form.appendChild(row);"
+        "  return form;"
+        "}", "<test>");
+}
+
+TEST(test_overlay_tracks_body_children)
+{
+    js_setup_with_overlay();
+    ASSERT(js_eval_bool(
+        "var form = makeDialog();"
+        "var before = __dom_overlay.roots.length;"
+        "document.body.appendChild(form);"
+        "var during = __dom_overlay.roots.length;"
+        "document.body.removeChild(form);"
+        "before === 0 && during === 1 && __dom_overlay.roots.length === 0 &&"
+        "form.elements.length === 3 && form.elements['textInput'].value === 'Ann' && form.elements[1].innerText === 'OK';"
+    ));
+    /* Canvas and video elements are not overlay widgets. */
+    ASSERT(js_eval_bool(
+        "var c = document.createElement('canvas'); document.body.appendChild(c);"
+        "var n = __dom_overlay.roots.length; document.body.removeChild(c); n === 0;"
+    ));
+    js_teardown();
+}
+
+TEST(test_overlay_layout_boxes)
+{
+    js_setup_with_overlay();
+    ASSERT(js_eval_bool(
+        "var form = makeDialog(); document.body.appendChild(form);"
+        "var n = __dom_overlay.layout(form, 816, 624);"
+        "var label = n.children[0], input = n.children[1], row = n.children[2];"
+        "var ok = row.children[0], cancel = row.children[1];"
+        /* border-box form: 330 wide, content 330 - 2*20 - 2*3 = 284 */
+        "n.w === 330 && n.contentW === 284 &&"
+        /* centred on screen: translate(-50%,-50%) from 50%/50% */
+        "n.screenX === Math.round(408 - 165) && n.screenY === Math.round(312 - n.h / 2) &&"
+        /* input fills the content width, 50px tall; row too */
+        "input.w === 284 && input.h === 50 && row.w === 284 &&"
+        /* buttons keep their own size and sit inside the row */
+        "ok.w === 100 && ok.h === 50 && cancel.w === 100 && row.h === 50 &&"
+        "ok.x >= row.bd.width && cancel.x > ok.x + ok.w + 10 && cancel.x + cancel.w <= row.w &&"
+        /* column: label, then input, then row (margins applied) */
+        "label.y < input.y && input.y + input.h + 15 <= row.y + 0.01 &&"
+        /* label is shrink-to-fit and centred */
+        "label.w < 284 && Math.abs((label.x + label.w / 2) - (n.bd.width + n.pad.l + 142)) < 1;"
+    ));
+    /* transform scale multiplies every length. */
+    ASSERT(js_eval_bool(
+        "form.style.transform = 'translate(-50%, -50%) scale(2)';"
+        "var m = __dom_overlay.layout(form, 1920, 1080);"
+        "m.w === 660 && m.children[1].h === 100 && m.screenX === Math.round(960 - 330);"
+    ));
+    ASSERT(js_eval_bool(
+        "form.style.transform = ''; form.style.left = '10px'; form.style.top = '20px';"
+        "var k = __dom_overlay.layout(form, 816, 624);"
+        "k.screenX === 10 && k.screenY === 20;"
+    ));
+    js_teardown();
+}
+
+TEST(test_overlay_style_rules_and_hidden)
+{
+    js_setup_with_overlay();
+    ASSERT(js_eval_bool(
+        "var style = document.createElement('style');"
+        "style.textContent = 'form, input, button { font-family: \\'customFont\\'; } #textInput { font-size: 30px }';"
+        "document.head.appendChild(style);"
+        "var form = makeDialog(); document.body.appendChild(form);"
+        "var n = __dom_overlay.layout(form, 816, 624);"
+        "var ok = n.children[2].children[0], input = n.children[1];"
+        "ok.font.family === \"'customFont'\" && input.font.size === 30 && n.children[0].font.size === 24;"
+    ));
+    ASSERT(js_eval_bool(
+        "form.children[0].style.display = 'none';"
+        "var m = __dom_overlay.layout(form, 816, 624);"
+        "m.children.length === 2 && m.children[0].el.tagName === 'INPUT';"
+    ));
+    js_teardown();
+}
+
+TEST(test_overlay_input_events)
+{
+    js_setup_with_overlay();
+    /* Focus, typing through text events, plugin key handlers with
+       preventDefault, Enter submitting the form, clicks on buttons. */
+    ASSERT(js_eval_bool(
+        "var form = makeDialog(); document.body.appendChild(form);"
+        "var input = form.elements['textInput'], ok = form.elements[1];"
+        "var log = [];"
+        "document.addEventListener('keydown', function(e) { log.push('doc:' + e.key); });"
+        "form.addEventListener('submit', function(e) { log.push('submit'); e.preventDefault(); });"
+        "input.addEventListener('keydown', function(e) { if (e.key === 'Backspace') { e.preventDefault(); log.push('bs'); } });"
+        "ok.onclick = function() { log.push('ok'); };"
+        "var consumedBeforeFocus = __dom_overlay.handleRawEvent({ type: 'keydown', key: 'a', code: 'KeyA', keyCode: 65 });"
+        "input.focus();"
+        "var r1 = __dom_overlay.handleRawEvent({ type: 'textinput', text: 'ie' });"
+        "var r2 = __dom_overlay.handleRawEvent({ type: 'keydown', key: 'Backspace', code: 'Backspace', keyCode: 8 });"
+        "var r3 = __dom_overlay.handleRawEvent({ type: 'keydown', key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 });"
+        "__dom_overlay.handleRawEvent({ type: 'textinput', text: 'X' });"
+        "__dom_overlay.handleRawEvent({ type: 'textinput', text: 'toolong' });"
+        "var r4 = __dom_overlay.handleRawEvent({ type: 'keydown', key: 'Enter', code: 'Enter', keyCode: 13 });"
+        "consumedBeforeFocus === false && document.activeElement === input &&"
+        "r1 === true && r2 === true && r3 === true && r4 === true &&"
+        /* 'Ann' + 'ie' = 'Annie'; the plugin's Backspace handler prevented the
+           default delete; ArrowLeft moved the caret; maxLength 5 blocked the
+           rest. */
+        "input.value === 'Annie' && input.selectionStart === 4;"
+    ));
+    ASSERT(js_eval_bool(
+        "log.indexOf('bs') >= 0 && log.indexOf('submit') >= 0 && log.indexOf('doc:Backspace') >= 0 && log.indexOf('doc:Enter') >= 0;"
+    ));
+    /* Mouse: press and release on the OK button clicks it; elsewhere passes through. */
+    ASSERT(js_eval_bool(
+        "typeof __dom_overlay.render === 'function' && __dom_overlay.roots.length === 1;"
+    ));
+    ASSERT(js_eval_bool(
+        "var n = __dom_overlay.layout(form, 816, 624);"
+        "var row = n.children[2], okBox = row.children[0];"
+        "var cx = n.screenX + row.x + okBox.x + okBox.w / 2, cy = n.screenY + row.y + okBox.y + okBox.h / 2;"
+        "__dom_overlay.updateLayouts(816, 624);"  /* refreshes the hit-test boxes */
+        "var d = __dom_overlay.handleRawEvent({ type: 'mousedown', clientX: cx, clientY: cy, button: 0 });"
+        "var u = __dom_overlay.handleRawEvent({ type: 'mouseup', clientX: cx, clientY: cy, button: 0 });"
+        "var outside = __dom_overlay.handleRawEvent({ type: 'mousedown', clientX: 1, clientY: 1, button: 0 });"
+        "d === true && u === true && outside === false && log.indexOf('ok') >= 0 && document.activeElement === ok;"
+    ));
+    js_teardown();
+}
+
 int main(void)
 {
     printf("Canvas2D tests:\n");
@@ -943,6 +1096,12 @@ int main(void)
     RUN(test_shim_font_parsing);
     RUN(test_shim_canvas_resize);
     RUN(test_shim_draw_canvas_to_canvas);
+
+    printf("--- HTML overlay tests ---\n");
+    RUN(test_overlay_tracks_body_children);
+    RUN(test_overlay_layout_boxes);
+    RUN(test_overlay_style_rules_and_hidden);
+    RUN(test_overlay_input_events);
 
     printf("\n%d/%d tests passed.\n", _tests_passed, _tests_run);
     return _tests_failed > 0 ? 1 : 0;
