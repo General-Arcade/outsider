@@ -215,31 +215,70 @@
         };
     }
 
-    /* Sprite.bitmap replacement abandons the old Bitmap without destroying it.
-       Free only its Canvas2D context and GL texture, not the whole
-       baseTexture, which the sprite may still reference when the new bitmap
-       is 0x0. */
+    /* Sprite.bitmap replacement abandons the old Bitmap without destroying it
+       (browsers rely on GC). Free its Canvas2D context and GL texture once no
+       sprite references it any more, and only after a grace period: plugins
+       draw into a bitmap through a scratch window, detach it there and keep
+       showing it from another sprite (DTextPicture), or park bitmaps to
+       re-attach later. Never the whole baseTexture, which a sprite may still
+       reference when the new bitmap is 0x0. */
     if (typeof Sprite !== "undefined") {
         var _origBitmapDesc = Object.getOwnPropertyDescriptor(Sprite.prototype, "bitmap");
+        var RELEASE_GRACE_FRAMES = 120;
+        var _pendingReleases = [];
+
+        var _releaseBitmapNative = function(bitmap) {
+            if (bitmap._canvas && bitmap._canvas._context2d && bitmap._canvas._context2d._handle &&
+                typeof __native_canvas2d !== "undefined") {
+                __native_canvas2d.destroy(bitmap._canvas._context2d._handle);
+                bitmap._canvas._context2d._handle = 0;
+            }
+            if (bitmap._baseTexture && bitmap._baseTexture._glTexture &&
+                !bitmap._baseTexture._glTextureIsImageOwned &&
+                typeof __native_renderer !== "undefined") {
+                __native_renderer.deleteTexture(bitmap._baseTexture._glTexture);
+                bitmap._baseTexture._glTexture = 0;
+            }
+        };
+
+        var _flushPendingReleases = function(now) {
+            var keep = [];
+            for (var i = 0; i < _pendingReleases.length; i++) {
+                var entry = _pendingReleases[i];
+                if ((entry.bitmap._spriteRefs | 0) > 0) {            /* re-attached */
+                    entry.bitmap._releasePending = false;
+                    continue;
+                }
+                if (now - entry.frame < RELEASE_GRACE_FRAMES) {
+                    keep.push(entry);
+                } else {
+                    entry.bitmap._releasePending = false;
+                    _releaseBitmapNative(entry.bitmap);
+                }
+            }
+            _pendingReleases = keep;
+        };
+
         if (_origBitmapDesc && _origBitmapDesc.set) {
             Object.defineProperty(Sprite.prototype, "bitmap", {
                 get: _origBitmapDesc.get,
                 set: function(value) {
                     var old = this._bitmap;
                     _origBitmapDesc.set.call(this, value);
-                    /* Only for anonymous canvas-backed bitmaps (new Bitmap(w,h)). */
-                    if (old && old !== value && old._canvas && !old._url) {
-                        if (old._canvas._context2d && old._canvas._context2d._handle &&
-                            typeof __native_canvas2d !== "undefined") {
-                            __native_canvas2d.destroy(old._canvas._context2d._handle);
-                            old._canvas._context2d._handle = 0;
+                    if (old === value) return;
+                    if (value) value._spriteRefs = (value._spriteRefs | 0) + 1;
+                    /* Only anonymous canvas-backed bitmaps (new Bitmap(w, h));
+                       loaded images belong to the ImageManager cache. */
+                    if (old && old._canvas && !old._url) {
+                        old._spriteRefs = Math.max(0, (old._spriteRefs | 0) - 1);
+                        if (old._spriteRefs === 0 && !old._releasePending) {
+                            old._releasePending = true;
+                            _pendingReleases.push({ bitmap: old,
+                                frame: typeof Graphics !== "undefined" ? Graphics.frameCount : 0 });
                         }
-                        if (old._baseTexture && old._baseTexture._glTexture &&
-                            !old._baseTexture._glTextureIsImageOwned &&
-                            typeof __native_renderer !== "undefined") {
-                            __native_renderer.deleteTexture(old._baseTexture._glTexture);
-                            old._baseTexture._glTexture = 0;
-                        }
+                    }
+                    if (_pendingReleases.length) {
+                        _flushPendingReleases(typeof Graphics !== "undefined" ? Graphics.frameCount : 0);
                     }
                 },
                 configurable: true

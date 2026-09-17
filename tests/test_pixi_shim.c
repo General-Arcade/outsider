@@ -1658,6 +1658,58 @@ TEST(test_pixi_graphics_texture_fill)
     js_teardown();
 }
 
+TEST(test_sprite_bitmap_deferred_release)
+{
+    /* tilemap_shim.js frees the canvas of an anonymous Bitmap a sprite lets
+       go of, but only once no sprite shows it and a grace period passed:
+       DTextPicture draws through a scratch window, nulls its contents and
+       keeps the bitmap on the picture sprite. */
+    js_setup_with_shims();
+    ASSERT(js_eval_bool(
+        "var destroyed = [];"
+        "globalThis.__native_canvas2d = { destroy: function(h) { destroyed.push(h); } };"
+        "globalThis.Graphics = { frameCount: 0 };"
+        "globalThis.Tilemap = function() {};"           /* the shim bails out without it */
+        "Tilemap.Layer = function() {}; Tilemap.Renderer = function() {};"
+        "function Sprite() { this._bitmap = null; }"
+        "Object.defineProperty(Sprite.prototype, 'bitmap', {"
+        "  get: function() { return this._bitmap; }, set: function(v) { this._bitmap = v; }, configurable: true });"
+        "true;"
+    ));
+    ASSERT(js_engine_eval_file(_js, "src/shims/tilemap_shim.js"));
+    ASSERT(js_eval_bool(
+        "function bmp(h) { return { _canvas: { _context2d: { _handle: h } }, _url: '' }; }"
+        "var shared = bmp(1), a = new Sprite(), b = new Sprite();"
+        "a.bitmap = shared; b.bitmap = shared;"
+        "a.bitmap = null;"                              /* still shown by b */
+        "Graphics.frameCount = 500; new Sprite().bitmap = bmp(9);"
+        "destroyed.length === 0 && shared._canvas._context2d._handle === 1;"
+    ));
+    ASSERT(js_eval_bool(
+        "b.bitmap = null;"                              /* nobody shows it now */
+        "Graphics.frameCount = 560; new Sprite().bitmap = bmp(9);"
+        "destroyed.length === 0;"                       /* inside the grace period */
+    ));
+    ASSERT(js_eval_bool(
+        "var c = new Sprite(); c.bitmap = shared;"      /* re-attached before release */
+        "Graphics.frameCount = 700; new Sprite().bitmap = bmp(9);"
+        "destroyed.length === 0 && shared._canvas._context2d._handle === 1;"
+    ));
+    ASSERT(js_eval_bool(
+        "c.bitmap = null;"
+        "Graphics.frameCount = 900; new Sprite().bitmap = bmp(9);"
+        "destroyed.length === 1 && destroyed[0] === 1 && shared._canvas._context2d._handle === 0;"
+    ));
+    /* Loaded images (with a URL) are never touched. */
+    ASSERT(js_eval_bool(
+        "var img = bmp(2); img._url = 'img/pictures/x.png';"
+        "var d = new Sprite(); d.bitmap = img; d.bitmap = null;"
+        "Graphics.frameCount = 2000; new Sprite().bitmap = bmp(9);"
+        "destroyed.length === 1 && img._canvas._context2d._handle === 2;"
+    ));
+    js_teardown();
+}
+
 TEST(test_pixi_readpixels_binding)
 {
     js_setup_with_shims();
@@ -1749,6 +1801,7 @@ int main(void)
     RUN(test_pixi_bitmap_snap_flow);
     RUN(test_pixi_readpixels_binding);
     RUN(test_pixi_graphics_texture_fill);
+    RUN(test_sprite_bitmap_deferred_release);
 
     printf("\n%d/%d tests passed.\n", _tests_passed, _tests_run);
     return _tests_failed > 0 ? 1 : 0;
