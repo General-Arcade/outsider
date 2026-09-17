@@ -324,6 +324,40 @@ static JSValue js_renderer_draw_quad_verts(JSContext *ctx, JSValueConst this_val
     return JS_UNDEFINED;
 }
 
+/* drawQuadVerticesUV(texture, x0,y0, x1,y1, x2,y2, x3,y3,
+                      u0,v0, u1,v1, u2,v2, u3,v3, tint, alpha)
+   Corners and their UVs in TL, TR, BR, BL order. */
+static JSValue js_renderer_draw_quad_verts_uv(JSContext *ctx, JSValueConst this_val,
+                                              int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 19)
+        return JS_ThrowTypeError(ctx, "drawQuadVerticesUV requires 19 arguments");
+    if (!s_renderer) return JS_UNDEFINED;
+
+    uint32_t texture, tint;
+    float xy[8], uv[8];
+    double d, alpha;
+
+    if (JS_ToUint32(ctx, &texture, argv[0])) return JS_EXCEPTION;
+    for (int i = 0; i < 8; i++) {
+        if (JS_ToFloat64(ctx, &d, argv[1 + i])) return JS_EXCEPTION;
+        xy[i] = (float)d;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (JS_ToFloat64(ctx, &d, argv[9 + i])) return JS_EXCEPTION;
+        uv[i] = (float)d;
+    }
+    if (JS_ToUint32(ctx, &tint, argv[17])) return JS_EXCEPTION;
+    if (JS_ToFloat64(ctx, &alpha, argv[18])) return JS_EXCEPTION;
+
+    SpriteBatch *batch = renderer_get_batch(s_renderer);
+    if (batch) {
+        sprite_batch_draw_verts_uv(batch, texture, xy, uv, tint, (float)alpha);
+    }
+    return JS_UNDEFINED;
+}
+
 /* setTextureFilter(texture, linear) */
 static JSValue js_renderer_set_texture_filter(JSContext *ctx, JSValueConst this_val,
                                               int argc, JSValueConst *argv)
@@ -499,6 +533,7 @@ static const JSCFunctionListEntry js_renderer_funcs[] = {
     JS_CFUNC_DEF("unbindRenderTexture", 0, js_renderer_unbind_rt),
     JS_CFUNC_DEF("drawQuad",           11, js_renderer_draw_quad),
     JS_CFUNC_DEF("drawQuadVertices",   15, js_renderer_draw_quad_verts),
+    JS_CFUNC_DEF("drawQuadVerticesUV", 19, js_renderer_draw_quad_verts_uv),
     JS_CFUNC_DEF("flush",               0, js_renderer_flush),
     JS_CFUNC_DEF("setBlendMode",        1, js_renderer_set_blend),
     JS_CFUNC_DEF("getDrawCalls",        0, js_renderer_draw_calls),

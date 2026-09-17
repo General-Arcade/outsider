@@ -433,6 +433,47 @@ void sprite_batch_draw_verts(SpriteBatch *sb, uint32_t texture,
     sb->quad_count++;
 }
 
+void sprite_batch_draw_verts_uv(SpriteBatch *sb, uint32_t texture,
+                                const float xy[8], const float uv[8],
+                                uint32_t tint, float alpha)
+{
+    if (!sb || alpha <= 0.0f) return;
+
+    float min_x = xy[0], max_x = xy[0], min_y = xy[1], max_y = xy[1];
+    for (int i = 1; i < 4; i++) {
+        if (xy[i * 2] < min_x) min_x = xy[i * 2];
+        if (xy[i * 2] > max_x) max_x = xy[i * 2];
+        if (xy[i * 2 + 1] < min_y) min_y = xy[i * 2 + 1];
+        if (xy[i * 2 + 1] > max_y) max_y = xy[i * 2 + 1];
+    }
+    if (max_x < 0.0f || min_x > sb->viewport_w ||
+        max_y < 0.0f || min_y > sb->viewport_h) {
+        sb->frame_culled++;
+        return;
+    }
+
+#ifdef RMMZ_HAS_GL
+    if (texture == 0) texture = sb->white_texture;
+#endif
+    if (sb->quad_count > 0 &&
+        (texture != sb->current_texture || sb->quad_count >= sb->max_quads)) {
+        sprite_batch_flush(sb);
+    }
+    sb->current_texture = texture;
+
+    float tr = (float)((tint >> 16) & 0xFF) / 255.0f;
+    float tg = (float)((tint >> 8) & 0xFF) / 255.0f;
+    float tb = (float)(tint & 0xFF) / 255.0f;
+
+    /* Slots TL, TR, BL, BR (see sprite_batch_draw_verts). */
+    Vertex *v = &sb->vertices[sb->quad_count * VERTS_PER_QUAD];
+    v[0] = (Vertex){ xy[0], xy[1], uv[0], uv[1], tr, tg, tb, alpha };
+    v[1] = (Vertex){ xy[2], xy[3], uv[2], uv[3], tr, tg, tb, alpha };
+    v[2] = (Vertex){ xy[6], xy[7], uv[6], uv[7], tr, tg, tb, alpha };
+    v[3] = (Vertex){ xy[4], xy[5], uv[4], uv[5], tr, tg, tb, alpha };
+    sb->quad_count++;
+}
+
 void sprite_batch_flush(SpriteBatch *sb)
 {
     if (!sb || sb->quad_count == 0) return;

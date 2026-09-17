@@ -2526,7 +2526,7 @@
     Graphics.prototype.clone = function() {
         var g = new Graphics();
         g._commands = this._commands.slice(0);
-        g._fillStyle = { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible, texture: this._fillStyle.texture };
+        g._fillStyle = { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible, texture: this._fillStyle.texture, matrix: this._fillStyle.matrix };
         g._lineStyle = { color: this._lineStyle.color, alpha: this._lineStyle.alpha, visible: this._lineStyle.visible, width: this._lineStyle.width, alignment: this._lineStyle.alignment, native: this._lineStyle.native, cap: this._lineStyle.cap, join: this._lineStyle.join, miterLimit: this._lineStyle.miterLimit };
         return g;
     };
@@ -2559,6 +2559,25 @@
         this._fillStyle.color = color !== undefined ? color : 0xFFFFFF;
         this._fillStyle.alpha = alpha !== undefined ? alpha : 1;
         this._fillStyle.visible = this._fillStyle.alpha > 0;
+        this._fillStyle.texture = Texture.WHITE;
+        this._fillStyle.matrix = null;
+        if (this.currentPath) {
+            this.startPoly();
+        }
+        return this;
+    };
+
+    /* beginTextureFill({texture, color, alpha, matrix}): fill shapes with a
+       texture. As in PIXI, `matrix` maps texture space to local space; its
+       inverse turns each vertex into texture coordinates. */
+    Graphics.prototype.beginTextureFill = function(options) {
+        options = options || {};
+        var texture = options.texture || Texture.WHITE;
+        this._fillStyle.color = options.color !== undefined ? options.color : 0xFFFFFF;
+        this._fillStyle.alpha = options.alpha !== undefined ? options.alpha : 1;
+        this._fillStyle.visible = this._fillStyle.alpha > 0;
+        this._fillStyle.texture = texture;
+        this._fillStyle.matrix = options.matrix ? options.matrix.clone().invert() : null;
         if (this.currentPath) {
             this.startPoly();
         }
@@ -2568,12 +2587,25 @@
     Graphics.prototype.endFill = function() {
         this.finishPoly();
         this._fillStyle.visible = false;
+        this._fillStyle.texture = Texture.WHITE;
+        this._fillStyle.matrix = null;
         return this;
+    };
+
+    /* Snapshot of the fill style for a draw command. */
+    Graphics.prototype._fillSnapshot = function() {
+        var f = this._fillStyle;
+        var snap = { color: f.color, alpha: f.alpha, visible: f.visible };
+        if (f.texture && f.texture !== Texture.WHITE) {
+            snap.texture = f.texture;
+            snap.matrix = f.matrix;
+        }
+        return snap;
     };
 
     Graphics.prototype.drawRect = function(x, y, width, height) {
         this._commands.push({ type: "rect", x: x, y: y, width: width, height: height,
-            fill: { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible },
+            fill: this._fillSnapshot(),
             line: { width: this._lineStyle.width, color: this._lineStyle.color, alpha: this._lineStyle.alpha, visible: this._lineStyle.visible }
         });
         this._dirty++;
@@ -2583,7 +2615,7 @@
     Graphics.prototype.drawRoundedRect = function(x, y, width, height, radius) {
         this._commands.push({ type: "roundedRect", x: x, y: y, width: width, height: height,
             radius: (radius === undefined || radius === null) ? 20 : radius,  /* PIXI default */
-            fill: { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible },
+            fill: this._fillSnapshot(),
             line: { width: this._lineStyle.width, color: this._lineStyle.color, alpha: this._lineStyle.alpha, visible: this._lineStyle.visible }
         });
         this._dirty++;
@@ -2592,7 +2624,7 @@
 
     Graphics.prototype.drawCircle = function(x, y, radius) {
         this._commands.push({ type: "circle", x: x, y: y, radius: radius,
-            fill: { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible },
+            fill: this._fillSnapshot(),
             line: { width: this._lineStyle.width, color: this._lineStyle.color, alpha: this._lineStyle.alpha, visible: this._lineStyle.visible }
         });
         this._dirty++;
@@ -2601,7 +2633,7 @@
 
     Graphics.prototype.drawEllipse = function(x, y, width, height) {
         this._commands.push({ type: "ellipse", x: x, y: y, width: width, height: height,
-            fill: { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible },
+            fill: this._fillSnapshot(),
             line: { width: this._lineStyle.width, color: this._lineStyle.color, alpha: this._lineStyle.alpha, visible: this._lineStyle.visible }
         });
         this._dirty++;
@@ -2625,7 +2657,7 @@
             }
         }
         this._commands.push({ type: "polygon", points: points,
-            fill: { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible },
+            fill: this._fillSnapshot(),
             line: { width: this._lineStyle.width, color: this._lineStyle.color, alpha: this._lineStyle.alpha, visible: this._lineStyle.visible }
         });
         this._dirty++;
@@ -2658,7 +2690,7 @@
             if (points.length > 2) {
                 this._commands.push({ type: "polyline", points: points,
                     line: { width: this.currentPath.lineStyle.width, color: this.currentPath.lineStyle.color, alpha: this.currentPath.lineStyle.alpha, visible: this.currentPath.lineStyle.width > 0 },
-                    fill: { color: this._fillStyle.color, alpha: this._fillStyle.alpha, visible: this._fillStyle.visible }
+                    fill: this._fillSnapshot()
                 });
             }
         }
@@ -2687,18 +2719,63 @@
         return [px * wt.a + py * wt.c + wt.tx, px * wt.b + py * wt.d + wt.ty];
     }
 
+    /* Texture fill state for one command: the GL texture plus a function
+       turning a local point into texture coordinates. Null when the fill
+       is a plain colour or the texture has nothing uploaded yet. */
+    function _gTextureFill(fill) {
+        if (!fill || !fill.texture) return null;
+        var tex = fill.texture;
+        var bt = tex.baseTexture;
+        if (!bt) return null;
+        var glTex = bt._glTexture || 0;
+        if ((glTex === 0 || bt._glTextureDirtyId !== bt.dirtyId) &&
+            (bt._canvas || bt.resource) && bt._ensureGLTexture) {
+            bt._ensureGLTexture();
+            glTex = bt._glTexture || 0;
+        }
+        if (glTex === 0 || !(bt.width > 0) || !(bt.height > 0)) return null;
+        var frame = tex._frame || tex.frame || { x: 0, y: 0 };
+        var m = fill.matrix;
+        var bw = bt.width, bh = bt.height;
+        return {
+            gl: glTex,
+            uv: function(x, y) {
+                var tx = x, ty = y;
+                if (m) {
+                    tx = m.a * x + m.c * y + m.tx;
+                    ty = m.b * x + m.d * y + m.ty;
+                }
+                return [(frame.x + tx) / bw, (frame.y + ty) / bh];
+            }
+        };
+    }
+
     /* Emit a triangle (a,b,c) in local space, transformed by wt. */
-    function _gTri(wt, ax, ay, bx, by, cx, cy, color, alpha) {
+    function _gTri(wt, ax, ay, bx, by, cx, cy, color, alpha, tex) {
         var A = _gxf(wt, ax, ay), B = _gxf(wt, bx, by), C = _gxf(wt, cx, cy);
+        if (tex) {
+            var ua = tex.uv(ax, ay), ub = tex.uv(bx, by), uc = tex.uv(cx, cy);
+            __native_renderer.drawQuadVerticesUV(
+                tex.gl, A[0], A[1], B[0], B[1], C[0], C[1], C[0], C[1],
+                ua[0], ua[1], ub[0], ub[1], uc[0], uc[1], uc[0], uc[1], color, alpha);
+            return;
+        }
         __native_renderer.drawQuadVertices(
             0, A[0], A[1], B[0], B[1], C[0], C[1], C[0], C[1],
             0, 0, 1, 1, color, alpha);
     }
 
     /* Emit a filled quad from four local corners (TL, TR, BR, BL). */
-    function _gQuad(wt, x0, y0, x1, y1, x2, y2, x3, y3, color, alpha) {
+    function _gQuad(wt, x0, y0, x1, y1, x2, y2, x3, y3, color, alpha, tex) {
         var A = _gxf(wt, x0, y0), B = _gxf(wt, x1, y1),
             C = _gxf(wt, x2, y2), D = _gxf(wt, x3, y3);
+        if (tex) {
+            var u0 = tex.uv(x0, y0), u1 = tex.uv(x1, y1), u2 = tex.uv(x2, y2), u3 = tex.uv(x3, y3);
+            __native_renderer.drawQuadVerticesUV(
+                tex.gl, A[0], A[1], B[0], B[1], C[0], C[1], D[0], D[1],
+                u0[0], u0[1], u1[0], u1[1], u2[0], u2[1], u3[0], u3[1], color, alpha);
+            return;
+        }
         __native_renderer.drawQuadVertices(
             0, A[0], A[1], B[0], B[1], C[0], C[1], D[0], D[1],
             0, 0, 1, 1, color, alpha);
@@ -2718,18 +2795,18 @@
     }
 
     /* Fill a closed loop of points as a fan around (cx,cy). */
-    function _gFillFan(wt, cx, cy, pts, color, alpha) {
+    function _gFillFan(wt, cx, cy, pts, color, alpha, tex) {
         for (var i = 0; i < pts.length; i++) {
             var p0 = pts[i], p1 = pts[(i + 1) % pts.length];
-            _gTri(wt, cx, cy, p0[0], p0[1], p1[0], p1[1], color, alpha);
+            _gTri(wt, cx, cy, p0[0], p0[1], p1[0], p1[1], color, alpha, tex);
         }
     }
 
     /* Fill a simple (convex) polygon as a fan from the first vertex. */
-    function _gFillPolygon(wt, pts, color, alpha) {
+    function _gFillPolygon(wt, pts, color, alpha, tex) {
         for (var i = 1; i < pts.length - 1; i++) {
             _gTri(wt, pts[0][0], pts[0][1], pts[i][0], pts[i][1],
-                  pts[i + 1][0], pts[i + 1][1], color, alpha);
+                  pts[i + 1][0], pts[i + 1][1], color, alpha, tex);
         }
     }
 
@@ -2755,32 +2832,32 @@
         }
     }
 
-    function _gArcFan(wt, cx, cy, r, a0, a1, segs, color, alpha) {
+    function _gArcFan(wt, cx, cy, r, a0, a1, segs, color, alpha, tex) {
         var prev = null;
         for (var i = 0; i <= segs; i++) {
             var a = a0 + (a1 - a0) * (i / segs);
             var px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r;
-            if (prev) _gTri(wt, cx, cy, prev[0], prev[1], px, py, color, alpha);
+            if (prev) _gTri(wt, cx, cy, prev[0], prev[1], px, py, color, alpha, tex);
             prev = [px, py];
         }
     }
 
     /* Fill a rounded rect via a non-overlapping decomposition (middle band +
        left/right strips + four corner arcs) so alpha blending stays correct. */
-    function _gFillRoundedRect(wt, x, y, w, h, r, color, alpha) {
+    function _gFillRoundedRect(wt, x, y, w, h, r, color, alpha, tex) {
         r = Math.min(r, w / 2, h / 2);
         if (r <= 0) {
-            _gQuad(wt, x, y, x + w, y, x + w, y + h, x, y + h, color, alpha);
+            _gQuad(wt, x, y, x + w, y, x + w, y + h, x, y + h, color, alpha, tex);
             return;
         }
-        _gQuad(wt, x + r, y, x + w - r, y, x + w - r, y + h, x + r, y + h, color, alpha);
-        _gQuad(wt, x, y + r, x + r, y + r, x + r, y + h - r, x, y + h - r, color, alpha);
-        _gQuad(wt, x + w - r, y + r, x + w, y + r, x + w, y + h - r, x + w - r, y + h - r, color, alpha);
+        _gQuad(wt, x + r, y, x + w - r, y, x + w - r, y + h, x + r, y + h, color, alpha, tex);
+        _gQuad(wt, x, y + r, x + r, y + r, x + r, y + h - r, x, y + h - r, color, alpha, tex);
+        _gQuad(wt, x + w - r, y + r, x + w, y + r, x + w, y + h - r, x + w - r, y + h - r, color, alpha, tex);
         var segs = Math.max(4, Math.min(16, Math.ceil(r * 0.5)));
-        _gArcFan(wt, x + r,     y + r,     r, Math.PI,       Math.PI * 1.5, segs, color, alpha);
-        _gArcFan(wt, x + w - r, y + r,     r, Math.PI * 1.5, Math.PI * 2,   segs, color, alpha);
-        _gArcFan(wt, x + w - r, y + h - r, r, 0,             Math.PI * 0.5, segs, color, alpha);
-        _gArcFan(wt, x + r,     y + h - r, r, Math.PI * 0.5, Math.PI,       segs, color, alpha);
+        _gArcFan(wt, x + r,     y + r,     r, Math.PI,       Math.PI * 1.5, segs, color, alpha, tex);
+        _gArcFan(wt, x + w - r, y + r,     r, Math.PI * 1.5, Math.PI * 2,   segs, color, alpha, tex);
+        _gArcFan(wt, x + w - r, y + h - r, r, 0,             Math.PI * 0.5, segs, color, alpha, tex);
+        _gArcFan(wt, x + r,     y + h - r, r, Math.PI * 0.5, Math.PI,       segs, color, alpha, tex);
     }
 
     function _gRectCorners(cmd) {
@@ -2801,20 +2878,21 @@
                 var fill = cmd.fill, line = cmd.line;
                 var fa = fill ? fill.alpha * wa : 0;
                 var la = line ? line.alpha * wa : 0;
+                var tex = (fill && fill.visible) ? _gTextureFill(fill) : null;
                 var pts, k;
 
                 if (cmd.type === "rect") {
                     if (fill && fill.visible) {
                         _gQuad(wt, cmd.x, cmd.y, cmd.x + cmd.width, cmd.y,
                                cmd.x + cmd.width, cmd.y + cmd.height, cmd.x, cmd.y + cmd.height,
-                               fill.color, fa);
+                               fill.color, fa, tex);
                     }
                     if (line && line.visible) {
                         _gStrokePath(wt, _gRectCorners(cmd), true, line.width, line.color, la);
                     }
                 } else if (cmd.type === "roundedRect") {
                     if (fill && fill.visible) {
-                        _gFillRoundedRect(wt, cmd.x, cmd.y, cmd.width, cmd.height, cmd.radius, fill.color, fa);
+                        _gFillRoundedRect(wt, cmd.x, cmd.y, cmd.width, cmd.height, cmd.radius, fill.color, fa, tex);
                     }
                     if (line && line.visible) {
                         _gStrokePath(wt, _gRectCorners(cmd), true, line.width, line.color, la);
@@ -2824,13 +2902,13 @@
                     var ry = (cmd.type === "circle") ? cmd.radius : cmd.height;
                     var segs = _gEllipseSegs(rx, ry);
                     pts = _gEllipsePoints(cmd.x, cmd.y, rx, ry, segs);
-                    if (fill && fill.visible) _gFillFan(wt, cmd.x, cmd.y, pts, fill.color, fa);
+                    if (fill && fill.visible) _gFillFan(wt, cmd.x, cmd.y, pts, fill.color, fa, tex);
                     if (line && line.visible) _gStrokePath(wt, pts, true, line.width, line.color, la);
                 } else if (cmd.type === "polygon") {
                     pts = [];
                     for (k = 0; k + 1 < cmd.points.length; k += 2) pts.push([cmd.points[k], cmd.points[k + 1]]);
                     if (pts.length >= 3) {
-                        if (fill && fill.visible) _gFillPolygon(wt, pts, fill.color, fa);
+                        if (fill && fill.visible) _gFillPolygon(wt, pts, fill.color, fa, tex);
                         if (line && line.visible) _gStrokePath(wt, pts, true, line.width, line.color, la);
                     }
                 } else if (cmd.type === "polyline") {

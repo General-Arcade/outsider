@@ -53,6 +53,13 @@ void sprite_batch_draw_verts(SpriteBatch *sb, uint32_t texture,
                              float u0, float v0, float u1, float v1,
                              uint32_t tint, float alpha);
 
+/* Like sprite_batch_draw_verts, but with a UV per corner (same TL, TR, BR,
+   BL order), for textured Graphics fills whose texture space is not
+   axis-aligned with the shape. */
+void sprite_batch_draw_verts_uv(SpriteBatch *sb, uint32_t texture,
+                                const float xy[8], const float uv[8],
+                                uint32_t tint, float alpha);
+
 /* Flush any queued quads to the GPU. Called automatically on texture
    change, batch full, or end of frame. */
 void sprite_batch_flush(SpriteBatch *sb);

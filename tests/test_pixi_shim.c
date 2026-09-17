@@ -1625,6 +1625,39 @@ TEST(test_pixi_bitmap_snap_flow)
     js_teardown();
 }
 
+TEST(test_pixi_graphics_texture_fill)
+{
+    js_setup_with_shims();
+    /* beginTextureFill records the texture and the inverted matrix; a fill
+       with a plain colour drops them again. */
+    ASSERT(js_eval_bool(
+        "var g = new PIXI.Graphics();"
+        "var bt = new PIXI.BaseTexture(null, {}); bt.setSize(64, 32); bt.valid = true; bt._glTexture = 7;"
+        "var tex = new PIXI.Texture(bt);"
+        "g.beginTextureFill({ texture: tex, matrix: new PIXI.Matrix(1, 0, 0, 1, 10, 20) });"
+        "g.drawRect(0, 0, 16, 16);"
+        "g.endFill();"
+        "g.beginFill(0xff0000); g.drawRect(20, 0, 8, 8); g.endFill();"
+        "var a = g._commands[0].fill, b = g._commands[1].fill;"
+        "a.texture === tex && a.matrix.tx === -10 && a.matrix.ty === -20 && a.visible === true &&"
+        "b.texture === undefined && b.color === 0xff0000;"
+    ));
+    /* Rendering a textured fill goes through drawQuadVerticesUV with UVs
+       derived from the vertex positions (here 16px of a 64x32 texture). */
+    ASSERT(js_eval_bool(
+        "var calls = [];"
+        "__native_renderer.drawQuadVerticesUV = function() { calls.push(Array.prototype.slice.call(arguments)); };"
+        "var plain = 0; __native_renderer.drawQuadVertices = function() { plain++; };"
+        "__native_renderer._active = true;"
+        "g.updateTransform(); g.render({ screen: { width: 800, height: 600 } });"
+        "var c = calls[0];"
+        "calls.length === 1 && plain === 1 && c[0] === 7 &&"
+        "Math.abs(c[9] - (-10 / 64)) < 1e-6 && Math.abs(c[10] - (-20 / 32)) < 1e-6 &&"  /* TL through the inverse */
+        "Math.abs(c[11] - 6 / 64) < 1e-6 && Math.abs(c[14] - (-4 / 32)) < 1e-6;"        /* TR u, BR v */
+    ));
+    js_teardown();
+}
+
 TEST(test_pixi_readpixels_binding)
 {
     js_setup_with_shims();
@@ -1715,6 +1748,7 @@ int main(void)
     RUN(test_pixi_render_to_texture);
     RUN(test_pixi_bitmap_snap_flow);
     RUN(test_pixi_readpixels_binding);
+    RUN(test_pixi_graphics_texture_fill);
 
     printf("\n%d/%d tests passed.\n", _tests_passed, _tests_run);
     return _tests_failed > 0 ? 1 : 0;
