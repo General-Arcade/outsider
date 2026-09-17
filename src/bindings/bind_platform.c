@@ -77,7 +77,7 @@ static JSValue js_platform_get_window_size(JSContext *ctx, JSValueConst this_val
     return obj;
 }
 
-/* setWindowTitle(title) - window title becomes "Outsider: <title>", or just
+/* setWindowTitle(title) - window title becomes "<title> [Outsider]", or just
    "Outsider" when the title is empty. Called from the document.title setter. */
 static JSValue js_platform_set_window_title(JSContext *ctx, JSValueConst this_val,
                                             int argc, JSValueConst *argv)
@@ -88,7 +88,7 @@ static JSValue js_platform_set_window_title(JSContext *ctx, JSValueConst this_va
     if (!title) return JS_EXCEPTION;
     char full[512];
     if (title[0] != '\0') {
-        snprintf(full, sizeof(full), "%s: %s", RMMZ_APP_NAME, title);
+        snprintf(full, sizeof(full), "%s [%s]", title, RMMZ_APP_NAME);
     } else {
         snprintf(full, sizeof(full), "%s", RMMZ_APP_NAME);
     }

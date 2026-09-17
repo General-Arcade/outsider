@@ -134,7 +134,7 @@ next to the executable, and for shims in `game/shims/` or `shims/` beside it.
 This is the layout produced by the packaging tool, so a packaged build runs
 on double-click.
 
-The window title shows `Outsider: <game title>` from `System.json`.
+The window title shows `<game title> [Outsider]` from `System.json`.
 Logs are written to `debug.log` in the game directory. Saves go to
 `save/` in the game directory, matching the stock player.
 
