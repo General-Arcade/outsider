@@ -94,6 +94,33 @@ class TestDecryptFile(unittest.TestCase):
         # Rest should match original
         self.assertEqual(decrypted[16:], png_data[16:])
 
+    def test_art_encrypter_key(self):
+        """Arthran's variant derives a 32-byte key: MD5 of the stock key's
+        hex string, followed by the same bytes reversed."""
+        key = resource_converter.art_encrypter_key(self.key_hex)
+        import hashlib
+        digest = hashlib.md5(self.key_hex.encode()).digest()
+        self.assertEqual(len(key), 32)
+        self.assertEqual(key[:16], digest)
+        self.assertEqual(key[16:], digest[::-1])
+
+    def test_decrypt_art_encrypter_file(self):
+        """Files with the ART header use the derived key over 32 bytes and
+        need it passed in; without it they are refused."""
+        png_data = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(40)) + b"\x00" * 50
+        art_key = resource_converter.art_encrypter_key(self.key_hex)
+        block = bytearray(png_data[:32])
+        for i in range(32):
+            block[i] ^= art_key[i]
+        src = Path(self.tmpdir) / "src" / "art.png_"
+        src.parent.mkdir(parents=True, exist_ok=True)
+        src.write_bytes(resource_converter.ART_MAGIC + bytes(block) + png_data[32:])
+        dst = Path(self.tmpdir) / "out" / "art.png"
+
+        self.assertFalse(resource_converter.decrypt_file(src, dst, self.key_bytes))
+        self.assertTrue(resource_converter.decrypt_file(src, dst, self.key_bytes, art_key))
+        self.assertEqual(dst.read_bytes(), png_data)
+
     def test_decrypt_ogg(self):
         """Test decryption of an OGG-like file."""
         ogg_data = b"OggS\x00\x02\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00" + b"\xff" * 200

@@ -11,6 +11,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -31,14 +32,40 @@ def parse_encryption_key(hex_key: str) -> bytes:
     return bytes.fromhex(hex_key)
 
 
-def decrypt_file(src: Path, dst: Path, key_bytes: bytes) -> bool:
+# Arthran's "Art_Decrypterator3000" plugin variant: a 32-byte header, and the
+# key is the MD5 of the stock key's hex string followed by the same bytes in
+# reverse, XORed over the first 32 body bytes.
+ART_MAGIC = b"ART\x00ENCRYPTER100FREE\x00VERSION\x00\x00\x00\x00"
+
+
+def art_encrypter_key(hex_key: str) -> bytes:
+    digest = hashlib.md5(hex_key.encode("ascii")).hexdigest()
+    pairs = [digest[i:i + 2] for i in range(0, len(digest), 2)]
+    pairs += list(reversed(pairs))
+    return bytes(int(p, 16) for p in pairs)
+
+
+def decrypt_file(src: Path, dst: Path, key_bytes: bytes, art_key: bytes = None) -> bool:
     """Decrypt a single RPG Maker encrypted file.
 
-    Format: 16-byte RPGMV header + 16 XOR'd bytes + rest of file unchanged.
+    Stock format: 16-byte RPGMV header + 16 XOR'd bytes + rest of file
+    unchanged. Files with the ART header use art_encrypter_key() instead.
     """
     data = src.read_bytes()
     if len(data) < RPGMV_HEADER_SIZE + 16:
         return False
+
+    if data.startswith(ART_MAGIC):
+        if not art_key or len(data) < len(ART_MAGIC):
+            return False
+        block = bytearray(data[len(ART_MAGIC):len(ART_MAGIC) + len(art_key)])
+        for i in range(len(block)):
+            block[i] ^= art_key[i]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with open(dst, "wb") as f:
+            f.write(bytes(block))
+            f.write(data[len(ART_MAGIC) + len(block):])
+        return True
 
     header = data[:RPGMV_HEADER_SIZE]
     if not header.startswith(RPGMV_MAGIC):
@@ -192,7 +219,8 @@ def run_conversion(game_dir: Path, output_dir: Path, dry_run: bool = False,
         print(f"Error: {system_json} not found", file=sys.stderr)
         return stats
 
-    with open(system_json, encoding="utf-8") as f:
+    # utf-8-sig: some games save System.json with a byte order mark.
+    with open(system_json, encoding="utf-8-sig") as f:
         system_data = json.load(f)
 
     has_encrypted_images = system_data.get("hasEncryptedImages", False)
@@ -200,8 +228,10 @@ def run_conversion(game_dir: Path, output_dir: Path, dry_run: bool = False,
     encryption_key = system_data.get("encryptionKey", "")
 
     key_bytes = None
+    art_key = None
     if (has_encrypted_images or has_encrypted_audio) and encryption_key:
         key_bytes = parse_encryption_key(encryption_key)
+        art_key = art_encrypter_key(encryption_key)
         print(f"Encryption key found: {encryption_key[:8]}...")
 
     # Step 1: Decrypt encrypted assets
@@ -219,7 +249,7 @@ def run_conversion(game_dir: Path, output_dir: Path, dry_run: bool = False,
             stats["decrypted"] += 1
             continue
 
-        if key_bytes and decrypt_file(src_path, dst_path, key_bytes):
+        if key_bytes and decrypt_file(src_path, dst_path, key_bytes, art_key):
             stats["decrypted"] += 1
             if verbose:
                 print(f"  decrypt: {rel} -> {dst_rel}")
@@ -289,7 +319,7 @@ def run_conversion(game_dir: Path, output_dir: Path, dry_run: bool = False,
     if not dry_run:
         dst_system = output_dir / "data" / "System.json"
         if dst_system.exists():
-            with open(dst_system, encoding="utf-8") as f:
+            with open(dst_system, encoding="utf-8-sig") as f:
                 sys_data = json.load(f)
             sys_data["hasEncryptedImages"] = False
             sys_data["hasEncryptedAudio"] = False

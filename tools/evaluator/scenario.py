@@ -22,7 +22,9 @@ an object with one action key plus optional modifiers. Actions:
 
 Modifiers: shot: "name" takes a screenshot after the action (after settle
 frames, default 30); if: "js expr" skips the step when false; timeout in
-seconds for waits (default 60).
+seconds for waits (default 60); nudge: "ok" or ["down", "ok"] presses a key
+(keys in rotation) every nudge_every frames (default 120) while a wait_scene
+has not been reached, for "press any key" or pre-title scenes.
 
 The game only advances inside actions and is frozen between them, so the
 frame a screenshot shows depends on the steps alone, not on how long the
@@ -94,7 +96,11 @@ class Runner:
         return self.driver.evaluate(js, timeout=timeout)
 
     def wait_scene(self, name, step):
-        return self._eval("__ev.waitScene(%s, %d)" % (js_str(name), self._frames_timeout(step)), step)
+        nudge = step.get("nudge")
+        args = "%s, %d" % (js_str(name), self._frames_timeout(step))
+        if nudge:
+            args += ", %s, %d" % (json.dumps(nudge), int(step.get("nudge_every", 120)))
+        return self._eval("__ev.waitScene(%s)" % args, step)
 
     def wait_idle(self, step):
         return self._eval("__ev.waitIdle(%d)" % self._frames_timeout(step), step)

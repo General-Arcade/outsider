@@ -21,7 +21,7 @@ def game_resolution(game_dir):
     """Game resolution from data/System.json (advanced.screenWidth/Height)."""
     path = os.path.join(game_dir, "data", "System.json")
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             system = json.load(f)
         adv = system.get("advanced", {})
         return int(adv.get("screenWidth", 816)), int(adv.get("screenHeight", 624))
@@ -34,11 +34,11 @@ def pick_troop(game_dir):
     battle scene does not stop on a load error (default-database troops
     often reference images the game never shipped)."""
     try:
-        with open(os.path.join(game_dir, "data", "Troops.json"), "r", encoding="utf-8") as f:
+        with open(os.path.join(game_dir, "data", "Troops.json"), "r", encoding="utf-8-sig") as f:
             troops = json.load(f)
-        with open(os.path.join(game_dir, "data", "Enemies.json"), "r", encoding="utf-8") as f:
+        with open(os.path.join(game_dir, "data", "Enemies.json"), "r", encoding="utf-8-sig") as f:
             enemies = json.load(f)
-        with open(os.path.join(game_dir, "data", "System.json"), "r", encoding="utf-8") as f:
+        with open(os.path.join(game_dir, "data", "System.json"), "r", encoding="utf-8-sig") as f:
             side_view = bool(json.load(f).get("optSideView"))
     except (OSError, ValueError):
         return None
@@ -72,7 +72,11 @@ def ensure_converted(original, game_dir, log):
         return
     log("Converting %s -> %s" % (original, game_dir))
     converter = os.path.join(ROOT, "tools", "resource_converter.py")
-    subprocess.run([sys.executable, converter, original, game_dir], check=True)
+    # A non-zero exit only means some assets failed (typically movies when
+    # ffmpeg is missing); the game is still usable for screenshots.
+    subprocess.run([sys.executable, converter, original, game_dir])
+    if not os.path.isfile(os.path.join(game_dir, "data", "System.json")):
+        raise SystemExit("conversion failed: %s has no data/System.json" % game_dir)
 
 
 def run_side(make_driver, side, steps, out_dir, log, env):
@@ -168,6 +172,11 @@ def main(argv=None):
                         help="extra argument for outsider.exe (repeatable)")
     args = parser.parse_args(argv)
 
+    # Game text (Japanese error screens, scene names) must not crash the
+    # log on a cp1252 console.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     log = print
     args.original = os.path.abspath(args.original)
     if not os.path.isfile(os.path.join(args.original, "package.json")):

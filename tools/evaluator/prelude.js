@@ -153,10 +153,37 @@
         });
     }
 
+    /* A game whose loop stopped (error screen, SceneManager.stop) never
+       runs updateMain again, so a frame-counted wait would hang forever.
+       Fail it after 5 s without progress and report the error on screen. */
+    var stallCheckStarted = false;
+    function startStallCheck() {
+        if (stallCheckStarted) return;
+        stallCheckStarted = true;
+        var lastFrame = ev.frame, stalledMs = 0;
+        setInterval(function() {
+            if (!ev.waiter) { lastFrame = ev.frame; stalledMs = 0; return; }
+            if (ev.frame !== lastFrame) { lastFrame = ev.frame; stalledMs = 0; return; }
+            stalledMs += 1000;
+            if (stalledMs >= 5000) {
+                var w = ev.waiter;
+                ev.waiter = null;
+                var printed = "";
+                try {
+                    var el = typeof Graphics !== "undefined" && Graphics._errorPrinter;
+                    printed = el ? String(el.innerHTML || el.textContent || "").replace(/<[^>]*>/g, " ") : "";
+                } catch (e) {}
+                w.reject(new Error("visual-eval: game loop stalled while waiting for " + w.label +
+                                   (printed ? " (error screen: " + printed.trim() + ")" : "")));
+            }
+        }, 1000);
+    }
+
     /* Run the game until test() is true, then freeze. */
     ev.waitFor = function(test, timeoutFrames, label) {
         if (ev.waiter) return Promise.reject(new Error("visual-eval: another wait is active"));
         return engineReady().then(function() {
+            startStallCheck();
             ev.frozen = false;
             return new Promise(function(resolve, reject) {
                 ev.waiter = {
@@ -201,8 +228,27 @@
             !SceneManager.isSceneChanging() && !(s.isBusy && s.isBusy());
     };
 
-    ev.waitScene = function(name, timeoutFrames) {
-        return ev.waitFor(function() { return ev.sceneReady(name); }, timeoutFrames, name);
+    /* Wait for a scene; with nudgeKey, press that key every nudgeEvery
+       frames while waiting (title screens behind "press any key" or
+       pre-title map scenes). */
+    ev.waitScene = function(name, timeoutFrames, nudgeKeys, nudgeEvery) {
+        var every = nudgeEvery || 120;
+        var keys = !nudgeKeys ? [] : (Array.isArray(nudgeKeys) ? nudgeKeys : [nudgeKeys]);
+        var lastPress = -every, next = 0, code = 0;
+        return ev.waitFor(function() {
+            if (ev.sceneReady(name)) return true;
+            if (keys.length) {
+                if (ev.frame - lastPress >= every) {
+                    code = keyCodeOf(keys[next % keys.length]);
+                    next++;
+                    keyEvent("keydown", code);
+                    lastPress = ev.frame;
+                } else if (ev.frame - lastPress === 2) {
+                    keyEvent("keyup", code);
+                }
+            }
+            return false;
+        }, timeoutFrames, name);
     };
 
     ev.waitIdle = function(timeoutFrames) {
@@ -289,10 +335,14 @@
         document.dispatchEvent(e);
     }
 
+    function keyCodeOf(name) {
+        return KEYS[name] !== undefined ? KEYS[name] : parseInt(name, 10);
+    }
+
     /* Hold a key for `hold` frames, then run `after` frames more, frozen at
        the end. Key names map to RMMZ's default keyboard layout. */
     ev.pressKey = function(name, hold, after) {
-        var code = KEYS[name] !== undefined ? KEYS[name] : parseInt(name, 10);
+        var code = keyCodeOf(name);
         if (!code) return Promise.reject(new Error("visual-eval: unknown key " + name));
         hold = Math.max(1, hold | 0);
         keyEvent("keydown", code);

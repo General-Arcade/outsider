@@ -2,7 +2,7 @@
   "name": "default",
   "description": "Title, options, load, new game map, menu scenes, message window, shop, name input, battle.",
   "steps": [
-    {"wait_scene": "Scene_Title", "settle": 90, "shot": "title"},
+    {"wait_scene": "Scene_Title", "nudge": ["ok", "down", "ok"], "settle": 90, "shot": "title"},
     {"scene": "Scene_Options", "shot": "options"},
     {"scene": "Scene_Load", "shot": "load"},
     {"new_game": true, "settle": 90, "shot": "map"},
