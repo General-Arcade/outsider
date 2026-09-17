@@ -89,6 +89,7 @@ int main(int argc, char *argv[])
     const char *probe_expr = NULL;
     int watchdog_ms = 0;
     int perf_every = 0;
+    bool control_mode = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
@@ -117,6 +118,10 @@ int main(int argc, char *argv[])
                 return 1;
             }
             explicit_resolution = true;
+        } else if (strcmp(argv[i], "--control") == 0) {
+            /* Automation: take eval/screenshot commands from stdin (see
+               game_loop_enable_control and tools/visual_eval.py). */
+            control_mode = true;
         } else if (strcmp(argv[i], "--no-audio") == 0) {
             no_audio = 1;
         } else if (argv[i][0] != '-') {
@@ -323,6 +328,15 @@ int main(int argc, char *argv[])
         extern Renderer *s_renderer;
         game_loop_set_frame_limit(loop, max_frames, screenshot_path, &s_renderer);
         if (probe_expr) game_loop_set_exit_probe(loop, probe_expr);
+    }
+    if (control_mode) {
+        extern Renderer *s_renderer;
+        char shim_path[1024];
+        snprintf(shim_path, sizeof(shim_path), "%s/control_shim.js", shim_dir);
+        if (!js_engine_eval_file(js, shim_path) ||
+            !game_loop_enable_control(loop, &s_renderer)) {
+            error_handler_log(LOG_ERROR, "Control mode could not be enabled");
+        }
     }
     game_loop_run(loop);
 

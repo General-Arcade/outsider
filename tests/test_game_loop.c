@@ -957,6 +957,70 @@ TEST(window_event_dispatch_after_shims)
     PASS();
 }
 
+TEST(control_shim_replies)
+{
+    /* control_shim.js turns "<id> eval <json>" commands into
+       "@@ctl <id> ok|err <json>" replies, awaiting promises first. */
+    JSEngine *engine = create_test_engine();
+    ASSERT(engine != NULL);
+
+    bool ok = eval_ok(engine,
+        "var sent = [];\n"
+        "globalThis.__native_control_send = function(line) { sent.push(line); };\n");
+    ASSERT(ok);
+    ok = js_engine_eval_file(engine, "src/shims/control_shim.js");
+    ASSERT(ok);
+
+    /* Synchronous value */
+    ok = eval_ok(engine, "__control_eval(1, JSON.stringify('1 + 1'))");
+    ASSERT(ok);
+    char *result = eval_str(engine, "sent[0]");
+    ASSERT(result != NULL);
+    ASSERT(strcmp(result, "@@ctl 1 ok 2") == 0);
+    js_engine_free_string(result);
+
+    /* undefined becomes null so every reply carries JSON */
+    ok = eval_ok(engine, "__control_eval(2, JSON.stringify('void 0'))");
+    ASSERT(ok);
+    result = eval_str(engine, "sent[1]");
+    ASSERT(result != NULL);
+    ASSERT(strcmp(result, "@@ctl 2 ok null") == 0);
+    js_engine_free_string(result);
+
+    /* Thrown errors are reported, not propagated */
+    ok = eval_ok(engine, "__control_eval(3, JSON.stringify('missingFn()'))");
+    ASSERT(ok);
+    result = eval_str(engine, "sent[2].indexOf('@@ctl 3 err ') === 0 && "
+                              "sent[2].indexOf('missingFn') > 0 ? 'yes' : sent[2]");
+    ASSERT(result != NULL);
+    ASSERT(strcmp(result, "yes") == 0);
+    js_engine_free_string(result);
+
+    /* Promises reply once settled */
+    ok = eval_ok(engine, "__control_eval(4, JSON.stringify('Promise.resolve({a: [1, 2]})'))");
+    ASSERT(ok);
+    result = eval_str(engine, "String(sent.length)");
+    ASSERT(result != NULL);
+    ASSERT(strcmp(result, "3") == 0);
+    js_engine_free_string(result);
+    js_engine_execute_pending_jobs(engine);
+    result = eval_str(engine, "sent[3]");
+    ASSERT(result != NULL);
+    ASSERT(strcmp(result, "@@ctl 4 ok {\"a\":[1,2]}") == 0);
+    js_engine_free_string(result);
+
+    /* Multi-line source survives the JSON envelope */
+    ok = eval_ok(engine, "__control_eval(5, JSON.stringify('var x = 2;\\nx * 21'))");
+    ASSERT(ok);
+    result = eval_str(engine, "sent[4]");
+    ASSERT(result != NULL);
+    ASSERT(strcmp(result, "@@ctl 5 ok 42") == 0);
+    js_engine_free_string(result);
+
+    js_engine_shutdown(engine);
+    PASS();
+}
+
 TEST(pixi_errors_captured_gracefully)
 {
     /* A core script that guards its PIXI usage must load cleanly and leave
@@ -1072,6 +1136,7 @@ int main(void)
     run_simulated_loop_with_shims();
     run_document_create_canvas_after_shims();
     run_window_event_dispatch_after_shims();
+    run_control_shim_replies();
     run_pixi_errors_captured_gracefully();
 
     cleanup_test_dir();

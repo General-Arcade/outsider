@@ -15,6 +15,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct ControlLine {
+    char *text;
+    struct ControlLine *next;
+} ControlLine;
+
 struct GameLoop {
     Platform  *platform;
     JSEngine  *engine;
@@ -48,6 +53,18 @@ struct GameLoop {
     int           perf_count;
     GameLoopStats perf_acc;
 
+    /* Control mode (--control): commands read from stdin by a thread. */
+    bool         control_enabled;
+    bool         control_started;      /* first command received */
+    bool         control_eof;
+    SDL_Thread  *control_thread;
+    SDL_mutex   *control_mutex;
+    ControlLine *control_head;
+    ControlLine *control_tail;
+    long         control_shot_id;
+    char        *control_shot_path;    /* screenshot requested this frame */
+    JSValue      js_controlEval;
+
     /* Cached JS function references to avoid repeated lookups */
     JSValue    js_global;
     JSValue    js_setWindowSize;
@@ -57,6 +74,8 @@ struct GameLoop {
     JSValue    js_flushAnimationFrames;
     bool       js_funcs_cached;
 };
+
+static void control_shutdown(GameLoop *loop);
 
 /* Cache frequently-called JS functions to avoid per-frame string lookups. */
 static void cache_js_functions(GameLoop *loop)
@@ -116,6 +135,7 @@ GameLoop *game_loop_create(Platform *platform, JSEngine *engine, int target_fps)
     loop->js_flushTimers = JS_UNDEFINED;
     loop->js_flushAnimationFrames = JS_UNDEFINED;
     loop->js_funcs_cached = false;
+    loop->js_controlEval = JS_UNDEFINED;
 
     return loop;
 }
@@ -123,6 +143,7 @@ GameLoop *game_loop_create(Platform *platform, JSEngine *engine, int target_fps)
 void game_loop_destroy(GameLoop *loop)
 {
     if (!loop) return;
+    control_shutdown(loop);
     release_js_functions(loop);
     free(loop->screenshot_path);
     free(loop->probe_expr);
@@ -155,7 +176,7 @@ void game_loop_set_frame_limit(GameLoop *loop, int max_frames,
 }
 
 /* Write the current default framebuffer as a binary PPM (RGB, top-down). */
-static void write_screenshot(GameLoop *loop, const char *path)
+static bool write_screenshot(GameLoop *loop, const char *path)
 {
     Renderer *r = loop->screenshot_renderer_slot ? *loop->screenshot_renderer_slot : NULL;
     int w = 0, h = 0;
@@ -163,14 +184,14 @@ static void write_screenshot(GameLoop *loop, const char *path)
     uint8_t *pixels = r ? renderer_read_pixels(r, 0, w, h) : NULL;
     if (!pixels) {
         error_handler_log(LOG_WARN, "Screenshot failed: no renderer or read-back failed");
-        return;
+        return false;
     }
 
     FILE *f = fopen(path, "wb");
     if (!f) {
         error_handler_log(LOG_WARN, "Screenshot failed: cannot open %s", path);
         free(pixels);
-        return;
+        return false;
     }
     fprintf(f, "P6\n%d %d\n255\n", w, h);
     for (size_t i = 0, n = (size_t)w * (size_t)h; i < n; i++) {
@@ -179,6 +200,217 @@ static void write_screenshot(GameLoop *loop, const char *path)
     fclose(f);
     free(pixels);
     error_handler_log(LOG_INFO, "Screenshot written: %s (%dx%d)", path, w, h);
+    return true;
+}
+
+/* --- Control mode ---------------------------------------------------------
+   A reader thread turns stdin into a queue of lines; the loop drains the
+   queue at the start of every frame. Replies go to stdout as
+   "@@ctl <id> <ok|err> <json>" so a driver can find them among the logs. */
+
+static void control_send(long id, const char *status, const char *json)
+{
+    printf("@@ctl %ld %s %s\n", id, status, json);
+    fflush(stdout);
+}
+
+/* JS: __native_control_send(text) prints one reply line. */
+static JSValue js_control_send(JSContext *ctx, JSValueConst this_val,
+                               int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 1) return JS_UNDEFINED;
+    const char *text = JS_ToCString(ctx, argv[0]);
+    if (text) {
+        printf("%s\n", text);
+        fflush(stdout);
+        JS_FreeCString(ctx, text);
+    }
+    return JS_UNDEFINED;
+}
+
+/* Read one line of any length from stdin (without the newline). */
+static char *read_stdin_line(void)
+{
+    size_t cap = 4096, len = 0;
+    char *buf = malloc(cap);
+    if (!buf) return NULL;
+    int c;
+    while ((c = fgetc(stdin)) != EOF) {
+        if (c == '\n') break;
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *grown = realloc(buf, cap);
+            if (!grown) { free(buf); return NULL; }
+            buf = grown;
+        }
+        buf[len++] = (char)c;
+    }
+    if (c == EOF && len == 0) { free(buf); return NULL; }
+    while (len > 0 && buf[len - 1] == '\r') len--;
+    buf[len] = '\0';
+    return buf;
+}
+
+static int control_reader_thread(void *arg)
+{
+    GameLoop *loop = arg;
+    for (;;) {
+        char *text = read_stdin_line();
+        SDL_LockMutex(loop->control_mutex);
+        if (!text) {
+            loop->control_eof = true;
+            SDL_UnlockMutex(loop->control_mutex);
+            return 0;
+        }
+        ControlLine *line = calloc(1, sizeof(*line));
+        if (line) {
+            line->text = text;
+            if (loop->control_tail) loop->control_tail->next = line;
+            else loop->control_head = line;
+            loop->control_tail = line;
+        } else {
+            free(text);
+        }
+        SDL_UnlockMutex(loop->control_mutex);
+    }
+}
+
+static ControlLine *control_pop(GameLoop *loop, bool *eof)
+{
+    SDL_LockMutex(loop->control_mutex);
+    ControlLine *line = loop->control_head;
+    if (line) {
+        loop->control_head = line->next;
+        if (!loop->control_head) loop->control_tail = NULL;
+    }
+    *eof = loop->control_eof && !loop->control_head;
+    SDL_UnlockMutex(loop->control_mutex);
+    return line;
+}
+
+bool game_loop_enable_control(GameLoop *loop, struct Renderer **renderer_slot)
+{
+    if (!loop || loop->control_enabled) return false;
+    JSContext *ctx = js_engine_get_context(loop->engine);
+    if (!ctx) return false;
+
+    loop->control_mutex = SDL_CreateMutex();
+    if (!loop->control_mutex) return false;
+
+    JSValue global = JS_GetGlobalObject(ctx);
+    JS_SetPropertyStr(ctx, global, "__native_control_send",
+                      JS_NewCFunction(ctx, js_control_send, "__native_control_send", 1));
+    loop->js_controlEval = JS_GetPropertyStr(ctx, global, "__control_eval");
+    JS_FreeValue(ctx, global);
+    if (!JS_IsFunction(ctx, loop->js_controlEval)) {
+        error_handler_log(LOG_ERROR, "Control mode: __control_eval missing (control_shim.js not loaded)");
+        JS_FreeValue(ctx, loop->js_controlEval);
+        loop->js_controlEval = JS_UNDEFINED;
+        return false;
+    }
+
+    loop->screenshot_renderer_slot = renderer_slot;
+    loop->control_enabled = true;
+    loop->control_thread = SDL_CreateThread(control_reader_thread, "control-stdin", loop);
+    if (!loop->control_thread) {
+        error_handler_log(LOG_ERROR, "Control mode: cannot start stdin reader");
+        loop->control_enabled = false;
+        return false;
+    }
+    error_handler_log(LOG_INFO, "Control mode enabled: reading commands from stdin");
+    return true;
+}
+
+/* Handle one "<id> <command> [payload]" line. */
+static void control_handle_line(GameLoop *loop, JSContext *ctx, const char *text)
+{
+    char *end = NULL;
+    long id = strtol(text, &end, 10);
+    if (end == text) return;                      /* not a command line */
+    while (*end == ' ') end++;
+    const char *cmd = end;
+    while (*end && *end != ' ') end++;
+    size_t cmd_len = (size_t)(end - cmd);
+    while (*end == ' ') end++;
+    const char *payload = end;
+
+    if (cmd_len == 4 && strncmp(cmd, "eval", 4) == 0) {
+        JSValue args[2];
+        args[0] = JS_NewInt64(ctx, id);
+        args[1] = JS_NewString(ctx, payload);
+        JSValue ret = JS_Call(ctx, loop->js_controlEval, JS_UNDEFINED, 2, args);
+        if (JS_IsException(ret)) {
+            error_handler_report_js_exception(loop->engine, false);
+            control_send(id, "err", "\"__control_eval threw\"");
+        }
+        JS_FreeValue(ctx, ret);
+        JS_FreeValue(ctx, args[0]);
+        JS_FreeValue(ctx, args[1]);
+    } else if (cmd_len == 4 && strncmp(cmd, "shot", 4) == 0) {
+        if (loop->control_shot_path) {
+            control_send(id, "err", "\"a screenshot is already pending this frame\"");
+        } else if (!*payload) {
+            control_send(id, "err", "\"shot needs a file path\"");
+        } else {
+            loop->control_shot_id = id;
+            loop->control_shot_path = strdup(payload);
+        }
+    } else if (cmd_len == 4 && strncmp(cmd, "quit", 4) == 0) {
+        control_send(id, "ok", "null");
+        loop->running = false;
+    } else {
+        control_send(id, "err", "\"unknown command\"");
+    }
+}
+
+/* Drain queued commands. Before the first frame this blocks until the
+   driver has sent something, so a prelude can run before any game frame. */
+static void control_dispatch(GameLoop *loop, JSContext *ctx)
+{
+    bool eof = false;
+    for (;;) {
+        ControlLine *line = control_pop(loop, &eof);
+        if (!line) {
+            if (eof) {
+                error_handler_log(LOG_INFO, "Control mode: stdin closed, stopping");
+                loop->running = false;
+                return;
+            }
+            if (loop->control_started) return;
+            SDL_Delay(1);
+            continue;
+        }
+        loop->control_started = true;
+        control_handle_line(loop, ctx, line->text);
+        free(line->text);
+        free(line);
+        if (!loop->running) return;
+    }
+}
+
+static void control_finish_frame(GameLoop *loop)
+{
+    if (!loop->control_shot_path) return;
+    bool ok = write_screenshot(loop, loop->control_shot_path);
+    control_send(loop->control_shot_id, ok ? "ok" : "err",
+                 ok ? "null" : "\"screenshot failed\"");
+    free(loop->control_shot_path);
+    loop->control_shot_path = NULL;
+}
+
+static void control_shutdown(GameLoop *loop)
+{
+    if (!loop->control_enabled) return;
+    /* The reader thread blocks in fgetc; detach it so shutdown never waits
+       on a driver that keeps stdin open. */
+    if (loop->control_thread) SDL_DetachThread(loop->control_thread);
+    JSContext *ctx = js_engine_get_context(loop->engine);
+    if (ctx) JS_FreeValue(ctx, loop->js_controlEval);
+    free(loop->control_shot_path);
+    /* Lines left in the queue are leaked deliberately: the reader thread
+       may still be appending, and the process is about to exit. */
+    loop->control_enabled = false;
 }
 
 /* Convert performance counter ticks to milliseconds. */
@@ -223,6 +455,11 @@ bool game_loop_step(GameLoop *loop)
 
     if (!loop->js_funcs_cached && ctx) {
         cache_js_functions(loop);
+    }
+
+    if (loop->control_enabled && ctx) {
+        control_dispatch(loop, ctx);
+        if (!loop->running) return false;
     }
 
     js_engine_watchdog_arm(loop->engine);
@@ -329,6 +566,9 @@ bool game_loop_step(GameLoop *loop)
 
     /* --- Audio update (fades, voice cleanup) --- */
     audio_update();
+
+    /* --- Control mode: a requested screenshot is read back before the swap --- */
+    if (loop->control_enabled) control_finish_frame(loop);
 
     /* --- Debug frame limit: capture the final frame before it is swapped --- */
     loop->total_frames++;

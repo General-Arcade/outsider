@@ -50,6 +50,13 @@ struct Renderer;
 void game_loop_set_frame_limit(GameLoop *loop, int max_frames,
                                const char *screenshot_path, struct Renderer **renderer_slot);
 
+/* Control mode (--control): read "<id> eval <json source>", "<id> shot <path>"
+   and "<id> quit" lines from stdin, one per line, and reply on stdout with
+   "@@ctl <id> ok|err <json>". Requires control_shim.js to be loaded. The
+   first frame waits for the first command so a prelude can run before the
+   game starts. Screenshots are PPM files read back through *renderer_slot. */
+bool game_loop_enable_control(GameLoop *loop, struct Renderer **renderer_slot);
+
 /* Debug aid: a JS expression evaluated and logged when the frame limit stops
    the loop, instead of the default active-scene name. */
 void game_loop_set_exit_probe(GameLoop *loop, const char *js_expression);
