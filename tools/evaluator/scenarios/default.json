@@ -1,0 +1,26 @@
+{
+  "name": "default",
+  "description": "Title, options, load, new game map, menu scenes, message window, shop, name input, battle.",
+  "steps": [
+    {"wait_scene": "Scene_Title", "settle": 90, "shot": "title"},
+    {"scene": "Scene_Options", "shot": "options"},
+    {"scene": "Scene_Load", "shot": "load"},
+    {"new_game": true, "settle": 90, "shot": "map"},
+    {"key": "down", "hold": 40, "after": 10, "shot": "map_walk", "settle": 0},
+    {"scene": "Scene_Menu", "shot": "menu", "keep": true},
+    {"scene": "Scene_Item", "shot": "item"},
+    {"scene": "Scene_Skill", "shot": "skill"},
+    {"scene": "Scene_Equip", "shot": "equip"},
+    {"scene": "Scene_Status", "shot": "status"},
+    {"scene": "Scene_Save", "shot": "save"},
+    {"scene": "Scene_GameEnd", "shot": "game_end"},
+    {"pop": true},
+    {"message": "The quick brown fox jumps over the lazy dog. 0123456789\n\\C[2]Colored\\C[0] text, \\I[1] icon, \\{big\\} and \\}small\\{ text.", "settle": 120, "shot": "message"},
+    {"keys": ["ok", "ok", "ok"], "wait": 30},
+    {"scene": "Scene_Shop", "args": "[__ev.shopGoods(4), false]", "shot": "shop"},
+    {"scene": "Scene_Name", "args": [1, 8], "if": "!!$dataActors[1]", "shot": "name"},
+    {"battle": "auto", "settle": 150, "shot": "battle"},
+    {"keys": ["ok", "ok", "ok"], "wait": 30, "shot": "battle_command", "settle": 0, "if": "__ev.sceneIs('Scene_Battle')"},
+    {"goto": "Scene_Map"}
+  ]
+}

@@ -121,6 +121,11 @@ console executable instead.
 
 # Other options
 ./build/outsider --game "/path/to/game" --resolution 1280x720 --no-audio
+
+# Debugging aids: stop after N frames with a screenshot and a JS probe,
+# or take commands from stdin (used by tools/visual_eval.py)
+./build/outsider "/path/to/game" --frames 300 --screenshot out.ppm --probe "SceneManager._scene.constructor.name"
+./build/outsider "/path/to/game" --control
 ```
 
 The game directory is a normal RPG Maker MZ project: `js/`, `data/`, `img/`,
@@ -240,6 +245,33 @@ Tests use only fixtures under `tests/fixtures/` and a temporary directory.
 Three tests can additionally exercise a real game (plugin loading, `pako`,
 and an end-to-end acceptance pass); point `RMMZ_TEST_GAME_DIR` at an RPG
 Maker MZ project at configure time to enable them, otherwise they skip.
+The packaging and evaluator tools have their own tests:
+`python tests/test_build_pipeline.py` and `python tests/test_visual_eval.py`.
+
+### Visual evaluator
+
+`tools/visual_eval.py` compares how a game looks in its own NW.js player
+and in Outsider. It launches both, plays the same scenario in each (title,
+options, a new game, every menu scene, a message window, shop, name entry,
+a battle), screenshots each scene at the same game frame and writes a
+report with side-by-side images, the differing regions and a verdict per
+scene (needs Pillow):
+
+```bash
+python tools/visual_eval.py "C:/Program Files (x86)/Steam/steamapps/common/Ann/Ann"
+# -> build/eval/Ann/report.html, report.json, original/, outsider/, diff/
+```
+
+The original is driven through the Chrome DevTools Protocol
+(`--remote-debugging-port`); Outsider through `--control`, which reads
+eval/screenshot commands on stdin. A JS prelude injected into both before
+the first frame seeds `Math.random`, ignores saved config and save files,
+keeps the window at the game's resolution and advances the game only while
+a step runs, so screenshots are frame-exact on both sides. Encrypted games
+are converted into `build/games/<name>` automatically; a game-specific step
+list can be given with `--scenario` (see `tools/evaluator/scenario.py` for
+the format), and `--skip-original` reuses the original's screenshots while
+iterating on the runtime.
 
 ## Authors and License
 
