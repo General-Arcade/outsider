@@ -91,8 +91,10 @@ class Runner:
         return int(float(step.get("timeout", DEFAULT_TIMEOUT)) * FPS)
 
     def _eval(self, js, step=None, timeout=None):
+        # Waits are counted in game frames; give the wall clock room for a
+        # game running well below 60 fps before declaring the driver dead.
         if timeout is None:
-            timeout = float(step.get("timeout", DEFAULT_TIMEOUT)) + 10.0 if step else DEFAULT_TIMEOUT
+            timeout = float(step.get("timeout", DEFAULT_TIMEOUT)) * 1.5 + 15.0 if step else DEFAULT_TIMEOUT
         return self.driver.evaluate(js, timeout=timeout)
 
     def wait_scene(self, name, step):
@@ -106,13 +108,13 @@ class Runner:
         return self._eval("__ev.waitIdle(%d)" % self._frames_timeout(step), step)
 
     def wait_frames(self, n, step):
-        return self._eval("__ev.waitFrames(%d)" % int(n), step, timeout=int(n) / FPS + 30.0)
+        return self._eval("__ev.waitFrames(%d)" % int(n), step, timeout=int(n) / FPS * 1.5 + 30.0)
 
     def press(self, key, step):
         hold = int(step.get("hold", 2))
         after = int(step.get("after", 6))
         return self._eval("__ev.pressKey(%s, %d, %d)" % (js_str(key), hold, after), step,
-                          timeout=(hold + after) / FPS + 30.0)
+                          timeout=(hold + after) / FPS * 1.5 + 30.0)
 
     def screenshot(self, name):
         path = os.path.join(self.out_dir, name + ".png")
@@ -201,6 +203,8 @@ class Runner:
         elif "eval" in step:
             value = self._eval("(__ev.unfreeze(), (%s))" % step["eval"], step)
             result.detail = "-> %s" % first_line(json.dumps(value))
+            if "wait" in step:
+                self.wait_frames(step["wait"], step)
 
         if "shot" in step:
             self._settle_and_shoot(step, result)

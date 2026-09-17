@@ -21,6 +21,6 @@
     {"scene": "Scene_Name", "args": [1, 8], "if": "!!$dataActors[1]", "shot": "name"},
     {"battle": "auto", "settle": 150, "shot": "battle"},
     {"keys": ["ok", "ok", "ok"], "wait": 30, "shot": "battle_command", "settle": 0, "if": "__ev.sceneIs('Scene_Battle')"},
-    {"goto": "Scene_Map"}
+    {"eval": "__ev.gotoScene('Scene_Map')", "wait": 60}
   ]
 }
