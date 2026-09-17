@@ -1,0 +1,10 @@
+mplus-2p-bold-sub.woff is the RPG Maker MZ default number font, a subset of
+M+ 2p Bold from the M+ FONTS project (https://mplus-fonts.osdn.jp/), used
+here as a WOFF 1.0 test fixture.
+
+M+ FONT LICENSE
+
+These fonts are free software.
+Unlimited permission is granted to use, copy, and distribute them, with or
+without modification, either commercially or noncommercially.
+THESE FONTS ARE PROVIDED "AS IS" WITHOUT WARRANTY.

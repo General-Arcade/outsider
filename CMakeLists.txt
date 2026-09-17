@@ -1,0 +1,163 @@
+cmake_minimum_required(VERSION 3.20)
+project(outsider C CXX)
+
+set(CMAKE_C_STANDARD 17)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Build type defaults to Debug
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Debug)
+endif()
+
+# Options
+option(RMMZ_BUILD_TESTS "Build tests" ON)
+option(RMMZ_WIN32_CONSOLE "Windows: build outsider as a console application instead of a GUI application" OFF)
+
+# Platform-specific system libraries and compiler settings.
+# On Linux/macOS libm and pthread are separate link libraries; on Windows
+# they are part of the CRT, so RMMZ_SYS_LIBS is empty there.
+if(WIN32)
+    set(RMMZ_SYS_LIBS "")
+    add_compile_definitions(
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+        _CRT_SECURE_NO_WARNINGS
+        _CRT_NONSTDC_NO_WARNINGS
+    )
+else()
+    set(RMMZ_SYS_LIBS m pthread)
+endif()
+if(MSVC)
+    # Source files are UTF-8; silence noisy narrowing/deprecation warnings.
+    add_compile_options(/wd4244 /wd4267 /wd4996 /utf-8)
+    # QuickJS throws a catchable "stack overflow" only when the OS stack is
+    # larger than its own limit (JS_STACK_SIZE in js_engine.c). The MSVC
+    # default of 1 MB is smaller, so deep recursion in game scripts would
+    # crash the process instead. Applies to every executable, tests included.
+    add_link_options(/STACK:16777216)
+endif()
+
+# Game default resolution
+set(RMMZ_DEFAULT_WIDTH 816 CACHE STRING "Default window width")
+set(RMMZ_DEFAULT_HEIGHT 624 CACHE STRING "Default window height")
+
+# Third-party dependencies
+add_subdirectory(third_party)
+
+# Link OpenGL
+find_package(OpenGL REQUIRED)
+
+# Main runtime sources
+add_executable(outsider
+    src/main.c
+    src/platform/platform_sdl2.c
+    src/platform/win_console.c
+    src/rendering/gl_loader.c
+    src/engine/js_engine.c
+    src/engine/game_loop.c
+    src/engine/error_handler.c
+    src/engine/script_loader.c
+    src/io/file_io.c
+    src/bindings/bind_io.c
+    src/bindings/bind_image.c
+    src/rendering/apng.c
+    src/bindings/bind_canvas2d.c
+    src/bindings/bind_renderer.c
+    src/bindings/bind_font.c
+    src/bindings/bind_tilemap.c
+    src/bindings/bind_audio.c
+    src/bindings/bind_input.c
+    src/bindings/bind_effekseer.c
+    src/bindings/bind_video.c
+    src/bindings/bind_filters.c
+    src/bindings/bind_platform.c
+    src/audio/audio_engine.cpp
+    src/effects/effekseer_backend.cpp
+    src/video/video_player.c
+    src/input/input_manager.c
+    src/rendering/image_loader.c
+    src/rendering/canvas2d.c
+    src/rendering/woff.c
+    src/rendering/font_manager.c
+    src/rendering/sprite_batch.c
+    src/rendering/renderer.c
+    src/rendering/tilemap.c
+    src/rendering/filters.c
+)
+
+# Windows: embed an application manifest so the process uses the UTF-8 code
+# page (game directories with non-ASCII names work with narrow CRT calls) and
+# is declared per-monitor DPI aware.
+if(WIN32)
+    target_sources(outsider PRIVATE src/platform/outsider.manifest)
+    # GUI subsystem: no console window on launch. SDL2main supplies WinMain.
+    # Output still reaches an attached parent console or console.log
+    # (see src/platform/win_console.c). RMMZ_WIN32_CONSOLE=ON restores the
+    # classic console build for debugging.
+    if(NOT RMMZ_WIN32_CONSOLE)
+        set_target_properties(outsider PROPERTIES WIN32_EXECUTABLE TRUE)
+    endif()
+endif()
+
+target_include_directories(outsider PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/pl_mpeg
+)
+
+target_compile_definitions(outsider PRIVATE
+    RMMZ_DEFAULT_WIDTH=${RMMZ_DEFAULT_WIDTH}
+    RMMZ_DEFAULT_HEIGHT=${RMMZ_DEFAULT_HEIGHT}
+    RMMZ_HAS_GL
+    $<$<BOOL:${RMMZ_USE_EFFEKSEER}>:RMMZ_HAS_EFFEKSEER>
+)
+
+target_link_libraries(outsider PRIVATE
+    SDL2::SDL2
+    SDL2::SDL2main
+    OpenGL::GL
+    qjs
+    soloud
+    ${RMMZ_SYS_LIBS}
+)
+
+if(RMMZ_USE_EFFEKSEER)
+    target_link_libraries(outsider PRIVATE Effekseer EffekseerRendererGL)
+endif()
+
+# Install target for distribution packaging
+install(TARGETS outsider
+    RUNTIME DESTINATION .
+)
+
+# Install shim JS files alongside executable
+install(DIRECTORY src/shims/
+    DESTINATION shims
+    FILES_MATCHING PATTERN "*.js"
+)
+
+# Game directory is set at install time via -DRMMZ_GAME_DIR
+set(RMMZ_GAME_DIR "" CACHE PATH "Path to RPG Maker MZ game directory for packaging")
+if(RMMZ_GAME_DIR)
+    install(DIRECTORY "${RMMZ_GAME_DIR}/"
+        DESTINATION game
+        PATTERN "*.exe" EXCLUDE
+        PATTERN "*.dll" EXCLUDE
+        PATTERN "*.pak" EXCLUDE
+        PATTERN "*.dat" EXCLUDE
+        PATTERN "node.dll" EXCLUDE
+        PATTERN "chromedriver.exe" EXCLUDE
+        PATTERN "notification_helper.exe" EXCLUDE
+        PATTERN "locales" EXCLUDE
+        PATTERN "lib" EXCLUDE
+        PATTERN "icon" EXCLUDE
+        PATTERN "css" EXCLUDE
+    )
+endif()
+
+# Tests
+if(RMMZ_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()

@@ -1,0 +1,28 @@
+Outsider (RPG Maker MZ Native Runtime)
+Copyright (c) 2026 General Arcade (Pte. Ltd.)
+
+This software is dual-licensed. You may use it under either of the
+following licenses:
+
+1. GNU General Public License, version 2 (GPL-2.0-only)
+
+   Free for use, modification and redistribution under the terms of the
+   GPLv2. Any work you distribute that is based on this software must be
+   released under the GPLv2 as well, with its complete source code.
+   The full license text is in LICENSES/GPL-2.0.txt.
+
+2. Commercial license
+
+   For use in a commercial or proprietary project, or in any product
+   whose source code you do not wish to release under the GPLv2, you need
+   a commercial license from General Arcade (Pte. Ltd.). See
+   LICENSES/COMMERCIAL.md and write to contact@generalarcade.com to
+   request one.
+
+Every source file carries the SPDX expression
+"GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial" to record this.
+
+Third-party components under third_party/ and the test fixtures under
+tests/fixtures/ keep their own licenses, noted alongside them.
+Dependencies fetched at build time (SDL2, QuickJS-NG, SoLoud, Effekseer)
+are licensed by their respective authors.

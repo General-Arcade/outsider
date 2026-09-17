@@ -1,0 +1,8 @@
+# Normalise line endings to LF in the repository; check out as LF everywhere.
+* text=auto eol=lf
+
+# Binary test fixtures
+*.png binary
+*.wav binary
+*.ogg binary
+*.ttf binary

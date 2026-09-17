@@ -1,0 +1,24 @@
+# Build output
+build/
+build-*/
+cmake-build-*/
+compile_commands.json
+Testing/
+
+# Runtime logs and save data produced while running a game
+*.log
+*.rmmzsave
+*.jsc
+
+# Distribution output from tools/build_game.py
+dist/
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
