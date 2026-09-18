@@ -112,6 +112,8 @@ add_test(NAME game_loop COMMAND test_game_loop WORKING_DIRECTORY ${CMAKE_SOURCE_
 add_executable(test_image_loader
     test_image_loader.c
     ${CMAKE_SOURCE_DIR}/src/rendering/image_loader.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/renderer.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/sprite_batch.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_image.c
     ${CMAKE_SOURCE_DIR}/src/rendering/apng.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_io.c
@@ -137,6 +139,8 @@ add_executable(test_canvas2d
     ${CMAKE_SOURCE_DIR}/src/rendering/canvas2d.c
     ${CMAKE_SOURCE_DIR}/src/rendering/woff.c
     ${CMAKE_SOURCE_DIR}/src/rendering/image_loader.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/renderer.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/sprite_batch.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_canvas2d.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_image.c
     ${CMAKE_SOURCE_DIR}/src/rendering/apng.c
@@ -188,6 +192,8 @@ add_executable(test_font
     ${CMAKE_SOURCE_DIR}/src/rendering/canvas2d.c
     ${CMAKE_SOURCE_DIR}/src/rendering/woff.c
     ${CMAKE_SOURCE_DIR}/src/rendering/image_loader.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/renderer.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/sprite_batch.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_font.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_canvas2d.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_image.c

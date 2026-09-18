@@ -88,7 +88,7 @@ Browser API shims (src/shims/*.js)
         |
 QuickJS C bindings (src/bindings/)
         |
-Native backends: SDL3 + OpenGL, SoLoud, Effekseer
+Native backends: SDL3 (OpenGL or GPU), SoLoud, Effekseer
 ```
 
 The runtime behaves like a purpose-built browser. Scripts are loaded in the
@@ -151,11 +151,46 @@ console executable instead.
 |--------|---------|-------------|
 | `CMAKE_BUILD_TYPE` | Debug | Debug, Release, RelWithDebInfo, MinSizeRel |
 | `RMMZ_BUILD_TESTS` | ON | Build the test suite |
+| `RMMZ_RENDER_BACKEND` | gl | Rendering backend: `gl` (OpenGL 4.5) or `gpu` (SDL3 GPU) |
 | `RMMZ_DEFAULT_WIDTH` / `RMMZ_DEFAULT_HEIGHT` | 816 / 624 | Initial window size |
 | `RMMZ_USE_EFFEKSEER` | OFF | Build the real Effekseer backend (stub otherwise) |
 | `RMMZ_WIN32_CONSOLE` | OFF | Windows: console subsystem instead of GUI |
 | `RMMZ_GAME_DIR` | (empty) | Game directory to bundle with `cmake --install` |
 | `RMMZ_TEST_GAME_DIR` | (empty) | Real game used by the integration tests (optional) |
+
+### Rendering backends
+
+The runtime renders through either OpenGL 4.5 or SDL3's GPU API, selected at
+build time:
+
+```bash
+cmake -B build -DRMMZ_RENDER_BACKEND=gl    # OpenGL 4.5 (default)
+cmake -B build -DRMMZ_RENDER_BACKEND=gpu   # SDL3 GPU: D3D12 or Vulkan
+```
+
+Both produce the same image. `tools/compare_backends.py` runs a scenario
+through two builds and diffs the screenshots; across Look Outside, Saihate
+Station, Aquarium and DRAPLINE every shot is pixel-identical, filters, masks,
+render textures and the HTML overlay included.
+
+The GPU backend keeps `renderer.h`, `sprite_batch.h` and `filters.h`
+unchanged, so the shims, bindings and tests are shared. Two things follow from
+SDL3 having no immediate mode:
+
+- **Draws are recorded, then replayed.** A copy pass cannot run while a render
+  pass is open, so vertices are gathered into one arena and uploaded once per
+  frame, then the recorded commands are replayed. Readbacks (`Bitmap.snap`,
+  screenshots) flush that queue first.
+- **Filter shaders must be bytecode.** `src/rendering/shaders/*.hlsl` is
+  compiled ahead of time by `tools/compile_shaders.py` into
+  `shaders_generated.h`, which is checked in, so building needs no shader
+  compiler. A plugin that supplies its own GLSL at run time cannot be compiled
+  and falls back to drawing unfiltered, exactly as it does when GL rejects a
+  shader.
+
+`tools/compile_shaders.py` emits DXIL, and SPIR-V as well when it finds a dxc
+built with the SPIR-V backend (the one in the Windows SDK is not; the Vulkan
+SDK's is). Without SPIR-V the GPU backend runs on D3D12 only.
 
 ## Usage
 
@@ -292,7 +327,7 @@ third_party/              Dependency fetching (CMake FetchContent) + vendored st
 
 | Library | Purpose |
 |---------|---------|
-| SDL3 3.4 | Window, OpenGL context, input, audio device |
+| SDL3 3.4 | Window, rendering (OpenGL context or GPU API), input, audio device |
 | QuickJS-NG 0.9 | JavaScript engine |
 | SoLoud | Audio mixing, OGG/WAV decoding |
 | Effekseer 1.70e | Particle effects (optional) |
