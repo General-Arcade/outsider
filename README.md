@@ -25,7 +25,7 @@ runs on Linux and Windows from the same source tree.
   (BGM, BGS, ME, SE), streaming for music, pitch and pan.
 - **Movies** (title videos, the Play Movie command) through a built-in
   MPEG-1 decoder (pl_mpeg); the packaging tools transcode the game's
-  WebM/MP4 files.
+  WebM/MP4 files (see [Movies](#movies)).
 - **Plugin friendly.** Common plugin needs such as `document.currentScript`,
   `fetch()`, Steam/Greenworks stubs and PIXI filter stubs are covered.
 - **Save data compatible.** Saves are written next to the game exactly where
@@ -158,6 +158,41 @@ natively (PIXI, Effekseer WASM, vorbis decoder). `build_game.py` then copies
 the shims into `dist/game/shims/`, builds the runtime and places the
 executable at `dist/`.
 
+### Movies
+
+RPG Maker MZ ships every movie twice, as `movies/<name>.webm` and
+`movies/<name>.mp4`, and plays them through the browser's video element.
+Outsider has no browser codecs; it plays MPEG-1 video with MP2 audio through
+the vendored `pl_mpeg` decoder, a single-file software decoder with no
+external dependencies. So the game's movies are transcoded once at packaging
+time:
+
+- `resource_converter.py` finds each movie stem under `movies/`, prefers the
+  `.webm` when both files exist, and writes `movies/<name>.mpg` with
+
+  ```
+  ffmpeg -y -i <src> -vf scale=trunc(iw/2)*2:trunc(ih/2)*2 \
+         -c:v mpeg1video -q:v 4 -bf 0 \
+         -c:a mp2 -b:a 192k -ar 44100 -ac 2 -f mpeg <dst>
+  ```
+
+  (odd frame sizes are rounded down to even, as MPEG-1 requires; a source
+  whose frame rate MPEG-1 does not allow is retried at 30 fps).
+- ffmpeg is taken from `PATH`, or from the `RMMZ_FFMPEG` environment
+  variable when set to the executable's path. Without it the converter
+  reports the movies as errors and everything else still converts.
+- At run time the video shim maps whatever URL the game requests
+  (`movies/intro.webm`, `.mp4`, `.ogv`) to the `.mpg` next to it. A movie
+  with no `.mpg` is skipped: the game receives `loadeddata` and `ended`
+  events a moment later and carries on.
+- Playback is drawn letterboxed over the game area after the frame; audio
+  goes through its own SoLoud stream. Video time follows the wall clock, so
+  a movie of the same length takes the same time as in the original player.
+
+To check a converted movie, play it with any MPEG-1 capable player, or run
+the game with `--frames 600 --screenshot out.ppm` past the point where it
+starts.
+
 ## Architecture
 
 ```
@@ -232,8 +267,8 @@ unavailable. Known limitations:
   only; the affected plugin logs a "no setter for property" error and
   continues.
 - M4A audio must be converted to OGG and movies to MPEG-1 (the packaging
-  tool does both with `ffmpeg`). A movie with no `.mpg` next to it is
-  skipped rather than played.
+  tool does both with `ffmpeg`, see [Movies](#movies)). A movie with no
+  `.mpg` next to it is skipped rather than played.
 
 ## Testing
 
