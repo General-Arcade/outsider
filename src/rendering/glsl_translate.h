@@ -27,6 +27,7 @@
 #define GLSL_MAX_NAME     64
 #define GLSL_MAX_UNIFORMS 32
 #define GLSL_MAX_SAMPLERS 4
+#define GLSL_MAX_VARYINGS 8
 
 typedef struct {
     char     name[GLSL_MAX_NAME];
@@ -55,6 +56,14 @@ typedef struct {
     /* Sampler uniforms in declaration order, which is also binding order. */
     char        samplers[GLSL_MAX_SAMPLERS][GLSL_MAX_NAME];
     int         sampler_count;
+
+    /* Inputs the shader expects from the vertex stage, in declaration order,
+       which is also the order of their locations. */
+    struct {
+        char name[GLSL_MAX_NAME];
+        char type[16];
+    }           varyings[GLSL_MAX_VARYINGS];
+    int         varying_count;
 } GlslTranslation;
 
 /* Translate a fragment shader. Returns false when the source uses something
@@ -69,5 +78,16 @@ const GlslUniform *glsl_translation_find(const GlslTranslation *t, const char *n
 
 /* Index of a sampler by name, or -1. */
 int glsl_translation_sampler_index(const GlslTranslation *t, const char *name);
+
+/* Build a vertex shader that feeds this fragment shader.
+ *
+ * Filter passes draw one fullscreen quad, so the geometry is fixed -- but the
+ * outputs are not: a pipeline is only valid if the vertex stage writes every
+ * input the fragment stage declares. The generated stage therefore mirrors the
+ * translation's varyings, handing the first the quad's texture coordinate
+ * (which is what `vTextureCoord` always is) and zeroing any others.
+ *
+ * Returns a malloc'd string the caller frees, or NULL. */
+char *glsl_generate_vertex(const GlslTranslation *t);
 
 #endif /* RMMZ_GLSL_TRANSLATE_H */

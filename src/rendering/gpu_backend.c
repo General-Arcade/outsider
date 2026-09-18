@@ -46,6 +46,9 @@ static const float BLIT_VERTICES[] = {
 typedef struct {
     bool                     used;
     SDL_GPUShader           *shader;
+    /* Generated to match this shader's inputs; a pipeline is only valid when
+       the vertex stage writes every input the fragment stage declares. */
+    SDL_GPUShader           *vertex;
     /* Indexed by whether the target is the swapchain, as for built-ins. */
     SDL_GPUGraphicsPipeline *pipelines[2];
     GlslTranslation          layout;
@@ -350,13 +353,9 @@ static SDL_GPUGraphicsPipeline *runtime_pipeline_for(uint32_t id, bool swapchain
     RuntimeShader *rs = &G.runtime[index];
     int slot = swapchain ? 1 : 0;
     if (!rs->pipelines[slot]) {
-        /* Not the shipped vertex shader: on D3D12 the runtime compiler emits
-           DXBC and the shipped bytecode is DXIL, which a single pipeline
-           cannot mix. */
-        SDL_GPUShader *vert = gpu_shader_runtime_fullscreen_vertex(G.device);
-        if (!vert) return NULL;
+        if (!rs->vertex) return NULL;
         rs->pipelines[slot] = build_pipeline_for(
-            vert, rs->shader, false, (int)id, BLEND_MODE_NORMAL, swapchain);
+            rs->vertex, rs->shader, false, (int)id, BLEND_MODE_NORMAL, swapchain);
     }
     return rs->pipelines[slot];
 }
@@ -521,6 +520,7 @@ void gpu_backend_shutdown(void)
                 SDL_ReleaseGPUGraphicsPipeline(G.device, G.runtime[i].pipelines[k]);
         }
         if (G.runtime[i].shader) SDL_ReleaseGPUShader(G.device, G.runtime[i].shader);
+        if (G.runtime[i].vertex) SDL_ReleaseGPUShader(G.device, G.runtime[i].vertex);
         glsl_translation_free(&G.runtime[i].layout);
     }
     free(G.runtime);
@@ -886,6 +886,19 @@ uint32_t gpu_runtime_shader_create(const char *source)
         return 0;
     }
 
+    /* The vertex stage is built here rather than shared, both because it must
+       mirror this shader's varyings and because on D3D12 the runtime compiler
+       emits DXBC, which cannot share a pipeline with the shipped DXIL. */
+    char *vertex_src = glsl_generate_vertex(&xlat);
+    SDL_GPUShader *vertex = vertex_src
+        ? gpu_shader_runtime_compile(G.device, vertex_src, true, 0, 0) : NULL;
+    free(vertex_src);
+    if (!vertex) {
+        SDL_ReleaseGPUShader(G.device, shader);
+        glsl_translation_free(&xlat);
+        return 0;
+    }
+
     uint32_t index = G.runtime_capacity;
     for (uint32_t i = 0; i < G.runtime_capacity; i++) {
         if (!G.runtime[i].used) { index = i; break; }
@@ -895,6 +908,7 @@ uint32_t gpu_runtime_shader_create(const char *source)
         RuntimeShader *r = realloc(G.runtime, grown * sizeof(*r));
         if (!r) {
             SDL_ReleaseGPUShader(G.device, shader);
+            SDL_ReleaseGPUShader(G.device, vertex);
             glsl_translation_free(&xlat);
             return 0;
         }
@@ -906,6 +920,7 @@ uint32_t gpu_runtime_shader_create(const char *source)
 
     G.runtime[index].used = true;
     G.runtime[index].shader = shader;
+    G.runtime[index].vertex = vertex;
     G.runtime[index].layout = xlat;
     fprintf(stderr, "gpu: compiled a plugin shader (%d uniform%s, %d sampler%s)\n",
             xlat.uniform_count, xlat.uniform_count == 1 ? "" : "s",
@@ -925,6 +940,7 @@ void gpu_runtime_shader_destroy(uint32_t id)
         if (rs->pipelines[i]) SDL_ReleaseGPUGraphicsPipeline(G.device, rs->pipelines[i]);
     }
     if (rs->shader) SDL_ReleaseGPUShader(G.device, rs->shader);
+    if (rs->vertex) SDL_ReleaseGPUShader(G.device, rs->vertex);
     glsl_translation_free(&rs->layout);
     memset(rs, 0, sizeof(*rs));
 }

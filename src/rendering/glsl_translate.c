@@ -206,6 +206,10 @@ bool glsl_translate_fragment(const char *source, GlslTranslation *out)
                 q = next_word(q, type, sizeof(type));
                 q = next_word(q, name, sizeof(name));
                 if (type[0] && name[0]) {
+                    if (varying_location >= GLSL_MAX_VARYINGS) goto fail;
+                    snprintf(t.varyings[varying_location].name, GLSL_MAX_NAME, "%s", name);
+                    snprintf(t.varyings[varying_location].type,
+                             sizeof(t.varyings[0].type), "%s", type);
                     buf_printf(&body, "layout(location = %d) in %s %s;\n",
                                varying_location++, type, name);
                     consumed = true;
@@ -267,6 +271,8 @@ bool glsl_translate_fragment(const char *source, GlslTranslation *out)
     (void)line_start;
 
     if (body.failed) goto fail;
+
+    t.varying_count = varying_location;
 
     t.uniform_size = t.uniform_count ? align_up(offset, 16) : 0;
 
@@ -342,6 +348,41 @@ const GlslUniform *glsl_translation_find(const GlslTranslation *t, const char *n
         if (strcmp(t->uniforms[i].name, name) == 0) return &t->uniforms[i];
     }
     return NULL;
+}
+
+char *glsl_generate_vertex(const GlslTranslation *t)
+{
+    if (!t) return NULL;
+
+    Buf b = { 0 };
+    buf_puts(&b, "#version 450\n");
+    buf_puts(&b, "layout(location = 0) in vec2 a_position;\n");
+    buf_puts(&b, "layout(location = 1) in vec2 a_texcoord;\n");
+
+    for (int i = 0; i < t->varying_count; i++) {
+        buf_printf(&b, "layout(location = %d) out %s %s;\n",
+                   i, t->varyings[i].type, t->varyings[i].name);
+    }
+
+    buf_puts(&b, "void main() {\n");
+    buf_puts(&b, "    gl_Position = vec4(a_position, 0.0, 1.0);\n");
+    for (int i = 0; i < t->varying_count; i++) {
+        if (i == 0 && strcmp(t->varyings[i].type, "vec2") == 0) {
+            buf_printf(&b, "    %s = a_texcoord;\n", t->varyings[i].name);
+        } else {
+            /* Nothing sensible to put here, but the pipeline needs the output
+               written for its signature to match. */
+            buf_printf(&b, "    %s = %s(0.0);\n",
+                       t->varyings[i].name, t->varyings[i].type);
+        }
+    }
+    buf_puts(&b, "}\n");
+
+    if (b.failed) {
+        free(b.data);
+        return NULL;
+    }
+    return b.data;
 }
 
 int glsl_translation_sampler_index(const GlslTranslation *t, const char *name)

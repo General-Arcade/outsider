@@ -10,6 +10,7 @@
 #include "rendering/glsl_translate.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static int g_tests = 0;
@@ -276,6 +277,28 @@ static void test_translate_edges(void)
         if (glsl_translate_fragment(src, &t)) {
             CHECK(strstr(t.source, "#define sample") == NULL,
                   "sampler2D triggered the sample rename");
+            glsl_translation_free(&t);
+        } else {
+            FAIL("translation failed");
+        }
+    }
+
+    TEST(vertex_stage_is_generated_to_match_varyings);
+    {
+        /* A pipeline is only valid when the vertex stage writes every input
+           the fragment stage declares, so the stage is generated per shader. */
+        const char *src =
+            "varying vec2 vTextureCoord;\n"
+            "varying vec2 vOther;\n"
+            "uniform sampler2D uSampler;\n"
+            "void main() { gl_FragColor = texture2D(uSampler, vTextureCoord + vOther); }\n";
+        if (glsl_translate_fragment(src, &t)) {
+            char *vs = glsl_generate_vertex(&t);
+            CHECK(t.varying_count == 2 && vs &&
+                  strstr(vs, "layout(location = 1) out vec2 vOther;") != NULL &&
+                  strstr(vs, "vTextureCoord = a_texcoord;") != NULL,
+                  "generated vertex stage does not match the varyings");
+            free(vs);
             glsl_translation_free(&t);
         } else {
             FAIL("translation failed");
