@@ -30,9 +30,16 @@
 
 typedef struct {
     char     name[GLSL_MAX_NAME];
+    /* The type exactly as the shader declared it. Kept verbatim because
+       float, int and bool are indistinguishable by size alone, and emitting
+       the wrong one turns `if (someBool)` into a type error. */
+    char     type[16];
     uint32_t offset;       /* byte offset within the uniform block (std140) */
     uint32_t size;         /* bytes the value occupies */
     uint32_t components;   /* 1 = float, 2 = vec2, 4 = vec4, 16 = mat4 */
+    /* int and bool members hold an integer, so a value arriving from JS as a
+       float has to be converted rather than copied bit for bit. */
+    bool     integer;
 } GlslUniform;
 
 typedef struct {

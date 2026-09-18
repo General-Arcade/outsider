@@ -135,14 +135,47 @@ void filter_delete_shader(uint32_t program)
     if (program >= GPU_SHADER_COUNT) gpu_runtime_shader_destroy(program);
 }
 
+/* Uniforms PIXI fills in for a filter without the filter ever declaring them
+   in JS. A plugin shader that samples neighbouring pixels reads its texel size
+   from these, so leaving them at zero collapses every tap onto one point and
+   the pass comes out blank. */
+static void supply_pixi_uniforms(int width, int height)
+{
+    if (!s_current.layout || width <= 0 || height <= 0) return;
+
+    const float w = (float)width, h = (float)height;
+    const struct { const char *name; int count; float v[4]; } builtins[] = {
+        /* PIXI 4: size in xy, source offset in zw. */
+        { "filterArea",  4, { w, h, 0.0f, 0.0f } },
+        /* Half-texel inset, so a clamped tap cannot bleed past the edge. */
+        { "filterClamp", 4, { 0.5f / w, 0.5f / h, (w - 0.5f) / w, (h - 0.5f) / h } },
+        { "dimensions",  2, { w, h, 0.0f, 0.0f } },
+        /* PIXI 5 spellings, which some filters use instead. */
+        { "inputSize",   4, { w, h, 1.0f / w, 1.0f / h } },
+        { "inputPixel",  4, { w, h, 1.0f / w, 1.0f / h } },
+        { "outputFrame", 4, { 0.0f, 0.0f, w, h } },
+    };
+
+    for (size_t i = 0; i < sizeof(builtins) / sizeof(builtins[0]); i++) {
+        const GlslUniform *u = glsl_translation_find(s_current.layout, builtins[i].name);
+        if (!u) continue;
+        size_t count = (size_t)builtins[i].count;
+        size_t max_floats = u->size / sizeof(float);
+        if (count > max_floats) count = max_floats;
+        if (u->offset + count * sizeof(float) > sizeof(s_current.uniforms)) continue;
+        memcpy(s_current.uniforms + u->offset, builtins[i].v, count * sizeof(float));
+    }
+}
+
 void filter_begin(uint32_t program, uint32_t input_texture, int width, int height)
 {
-    (void)width; (void)height;
     memset(&s_current, 0, sizeof(s_current));
     s_current.shader = (int)program;
     s_current.textures[0] = input_texture;
     s_current.texture_count = 1;
     s_current.layout = (const GlslTranslation *)gpu_runtime_shader_layout(program);
+    /* Set before the filter's own uniforms, so anything it names itself wins. */
+    supply_pixi_uniforms(width, height);
 }
 
 static const UniformSlot *find_slot(int shader, const char *name)
@@ -166,6 +199,14 @@ static void write_uniform(const char *name, const float *values, size_t count)
            would scribble past the member; keep to whichever is smaller. */
         size_t max_floats = u->size / sizeof(float);
         if (count > max_floats) count = max_floats;
+        if (u->integer) {
+            /* The value came from JS as a float; an int or bool member needs
+               the number, not its bit pattern. */
+            if (u->offset + count * sizeof(int32_t) > sizeof(s_current.uniforms)) return;
+            int32_t *dst = (int32_t *)(s_current.uniforms + u->offset);
+            for (size_t i = 0; i < count; i++) dst[i] = (int32_t)values[i];
+            return;
+        }
         offset = u->offset;
     } else {
         const UniformSlot *slot = find_slot(s_current.shader, name);

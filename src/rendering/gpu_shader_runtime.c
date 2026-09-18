@@ -80,6 +80,20 @@ static unsigned int *compile_spirv(const char *source, bool vertex_stage,
     if (!glslang_shader_parse(shader, &input)) {
         fprintf(stderr, "gpu: plugin shader parse failed:\n%s\n",
                 glslang_shader_get_info_log(shader));
+        /* The source the compiler saw is the rewrite, not what the plugin
+           wrote, so print it with line numbers or the diagnostic above is
+           impossible to place. */
+        fprintf(stderr, "--- translated source ---\n");
+        int line = 1;
+        const char *at = source;
+        while (*at && line <= 200) {
+            const char *eol = strchr(at, '\n');
+            int len = eol ? (int)(eol - at) : (int)strlen(at);
+            fprintf(stderr, "%4d | %.*s\n", line++, len, at);
+            if (!eol) break;
+            at = eol + 1;
+        }
+        fprintf(stderr, "--- end ---\n");
         glslang_shader_delete(shader);
         return NULL;
     }

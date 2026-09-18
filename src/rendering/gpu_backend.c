@@ -907,6 +907,9 @@ uint32_t gpu_runtime_shader_create(const char *source)
     G.runtime[index].used = true;
     G.runtime[index].shader = shader;
     G.runtime[index].layout = xlat;
+    fprintf(stderr, "gpu: compiled a plugin shader (%d uniform%s, %d sampler%s)\n",
+            xlat.uniform_count, xlat.uniform_count == 1 ? "" : "s",
+            xlat.sampler_count, xlat.sampler_count == 1 ? "" : "s");
     return GPU_SHADER_COUNT + index;
 }
 

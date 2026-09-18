@@ -73,11 +73,14 @@ static void test_translate_basic(void)
           strstr(t.source, "vec3 color;") != NULL,
           "uniform block missing");
 
-    TEST(body_references_are_redirected_not_rewritten);
-    /* The shader's own statement survives untouched; the #define does the work. */
-    CHECK(strstr(t.source, "#define color _rmmz.color") != NULL &&
+    TEST(uniform_block_is_anonymous_so_names_stay_global);
+    /* The block has no instance name, so the shader's own statement still
+       reads `color` and needs no rewriting -- and a local of the same name
+       may still shadow it, as GLSL ES allowed. */
+    CHECK(strstr(t.source, "};") != NULL &&
+          strstr(t.source, "} _rmmz;") == NULL &&
           strstr(t.source, "vec3 colorOverlay = color * currentColor.a;") != NULL,
-          "alias or original body missing");
+          "block should be anonymous and the body untouched");
 
     TEST(frag_color_gets_an_output);
     CHECK(strstr(t.source, "out vec4 _rmmzFragColor;") != NULL &&
@@ -188,6 +191,91 @@ static void test_translate_edges(void)
                   glsl_translation_sampler_index(&t, "bloomTexture") == 1 &&
                   strstr(t.source, "binding = 1) uniform sampler2D bloomTexture;") != NULL,
                   "second sampler mis-bound");
+            glsl_translation_free(&t);
+        } else {
+            FAIL("translation failed");
+        }
+    }
+
+    TEST(bool_uniform_keeps_its_declared_type);
+    {
+        /* pixi-filters' GlowFilter does exactly this. Emitting the member as
+           a float compiles the block fine and then fails on `if (knockout)`. */
+        const char *src =
+            "varying vec2 vTextureCoord;\n"
+            "uniform sampler2D uSampler;\n"
+            "uniform bool knockout;\n"
+            "void main() {\n"
+            "    if (knockout) { gl_FragColor = vec4(0.0); }\n"
+            "    else { gl_FragColor = texture2D(uSampler, vTextureCoord); }\n"
+            "}\n";
+        if (glsl_translate_fragment(src, &t)) {
+            const GlslUniform *u = glsl_translation_find(&t, "knockout");
+            CHECK(u && strcmp(u->type, "bool") == 0 && u->integer &&
+                  strstr(t.source, "bool knockout;") != NULL,
+                  "bool was not preserved");
+            glsl_translation_free(&t);
+        } else {
+            FAIL("translation failed");
+        }
+    }
+
+    TEST(a_parameter_may_shadow_a_uniform);
+    {
+        /* pixi-filters' PixelateFilter declares `uniform vec2 size` and then
+           `vec2 pixelate(vec2 coord, vec2 size)`. Aliasing the uniform with a
+           #define would rewrite the parameter too, yielding `vec2 _u.size`. */
+        const char *src =
+            "varying vec2 vTextureCoord;\n"
+            "uniform sampler2D uSampler;\n"
+            "uniform vec2 size;\n"
+            "vec2 pixelate(vec2 coord, vec2 size)\n"
+            "{\n"
+            "    return floor(coord / size) * size;\n"
+            "}\n"
+            "void main() {\n"
+            "    gl_FragColor = texture2D(uSampler, pixelate(vTextureCoord, size));\n"
+            "}\n";
+        if (glsl_translate_fragment(src, &t)) {
+            CHECK(strstr(t.source, "vec2 pixelate(vec2 coord, vec2 size)") != NULL &&
+                  strstr(t.source, "_rmmz.size") == NULL,
+                  "the shadowing parameter was rewritten");
+            glsl_translation_free(&t);
+        } else {
+            FAIL("translation failed");
+        }
+    }
+
+    TEST(identifiers_reserved_only_in_desktop_glsl_are_renamed);
+    {
+        /* `sample` is an ordinary name in GLSL ES 1.00 and a keyword in 450;
+           ZoomBlurFilter declares `vec4 sample`. */
+        const char *src =
+            "varying vec2 vTextureCoord;\n"
+            "uniform sampler2D uSampler;\n"
+            "void main() {\n"
+            "    vec4 sample = texture2D(uSampler, vTextureCoord);\n"
+            "    gl_FragColor = sample;\n"
+            "}\n";
+        if (glsl_translate_fragment(src, &t)) {
+            CHECK(strstr(t.source, "#define sample _rmmz_sample") != NULL,
+                  "reserved identifier not renamed");
+            glsl_translation_free(&t);
+        } else {
+            FAIL("translation failed");
+        }
+    }
+
+    TEST(sampler2D_is_not_mistaken_for_sample);
+    {
+        /* The rename must match whole words only. */
+        const char *src =
+            "varying vec2 vTextureCoord;\n"
+            "uniform sampler2D uSampler;\n"
+            "void main() { gl_FragColor = texture2D(uSampler, vTextureCoord); }\n";
+        if (glsl_translate_fragment(src, &t)) {
+            CHECK(strstr(t.source, "#define sample") == NULL,
+                  "sampler2D triggered the sample rename");
             glsl_translation_free(&t);
         } else {
             FAIL("translation failed");

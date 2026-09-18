@@ -55,18 +55,19 @@ typedef struct {
     uint32_t    size;
     uint32_t    align;
     uint32_t    components;
+    bool        integer;
 } GlslType;
 
 static const GlslType TYPES[] = {
-    { "float", 4,  4,  1 },
-    { "int",   4,  4,  1 },
-    { "bool",  4,  4,  1 },
-    { "vec2",  8,  8,  2 },
-    { "vec3",  12, 16, 3 },
-    { "vec4",  16, 16, 4 },
-    { "mat2",  32, 16, 4 },
-    { "mat3",  48, 16, 9 },
-    { "mat4",  64, 16, 16 },
+    { "float", 4,  4,  1,  false },
+    { "int",   4,  4,  1,  true  },
+    { "bool",  4,  4,  1,  true  },
+    { "vec2",  8,  8,  2,  false },
+    { "vec3",  12, 16, 3,  false },
+    { "vec4",  16, 16, 4,  false },
+    { "mat2",  32, 16, 4,  false },
+    { "mat3",  48, 16, 9,  false },
+    { "mat4",  64, 16, 16, false },
 };
 
 static const GlslType *find_type(const char *name)
@@ -126,6 +127,29 @@ static const char *next_word(const char *p, char *out, size_t out_size)
     }
     out[i] = '\0';
     return p;
+}
+
+/* Reserved in GLSL 450 but ordinary identifiers in the ES 1.00 these shaders
+   were written for. pixi-filters' ZoomBlurFilter declares `vec4 sample`. */
+static const char *RESERVED_IN_450[] = {
+    "sample", "filter", "buffer", "shared", "patch", "subroutine",
+    "precise", "resource", "active", "input", "output", "partition",
+};
+
+/* Whole-word search, so `sampler2D` does not look like `sample`. */
+static bool contains_word(const char *haystack, const char *word)
+{
+    size_t n = strlen(word);
+    for (const char *p = strstr(haystack, word); p; p = strstr(p + 1, word)) {
+        char before = (p == haystack) ? ' ' : p[-1];
+        char after = p[n];
+        bool bok = !((before >= 'a' && before <= 'z') || (before >= 'A' && before <= 'Z') ||
+                     (before >= '0' && before <= '9') || before == '_');
+        bool aok = !((after >= 'a' && after <= 'z') || (after >= 'A' && after <= 'Z') ||
+                     (after >= '0' && after <= '9') || after == '_');
+        if (bok && aok) return true;
+    }
+    return false;
 }
 
 static bool starts_with_word(const char *p, const char *word)
@@ -212,9 +236,11 @@ bool glsl_translate_fragment(const char *source, GlslTranslation *out)
                     offset = align_up(offset, gt->align);
                     GlslUniform *u = &t.uniforms[t.uniform_count++];
                     snprintf(u->name, GLSL_MAX_NAME, "%s", name);
+                    snprintf(u->type, sizeof(u->type), "%s", gt->name);
                     u->offset = offset;
                     u->size = gt->size;
                     u->components = gt->components;
+                    u->integer = gt->integer;
                     offset += gt->size;
                     /* The declaration moves into the block emitted below; the
                        body keeps referring to the bare name. */
@@ -250,31 +276,33 @@ bool glsl_translate_fragment(const char *source, GlslTranslation *out)
     buf_puts(&outbuf, "#version 450\n");
 
     if (t.uniform_count) {
+        /* Deliberately anonymous: a block with no instance name puts its
+           members in global scope, so the shader's own references still read
+           `size` rather than `_rmmz.size`. Aliasing them with #define instead
+           would rewrite every occurrence of the name, including a function
+           parameter that shadows it -- which is exactly what pixi-filters'
+           PixelateFilter does with `vec2 pixelate(vec2 coord, vec2 size)`. */
         buf_puts(&outbuf, "layout(set = 3, binding = 0, std140) uniform _RmmzUniforms {\n");
         for (int i = 0; i < t.uniform_count; i++) {
-            const char *type = "float";
-            for (size_t k = 0; k < sizeof(TYPES) / sizeof(TYPES[0]); k++) {
-                if (TYPES[k].size == t.uniforms[i].size &&
-                    TYPES[k].components == t.uniforms[i].components) {
-                    type = TYPES[k].name;
-                    break;
-                }
-            }
-            buf_printf(&outbuf, "    %s %s;\n", type, t.uniforms[i].name);
+            buf_printf(&outbuf, "    %s %s;\n",
+                       t.uniforms[i].type, t.uniforms[i].name);
         }
-        buf_puts(&outbuf, "} _rmmz;\n");
-        /* Aliases come after the block so its own member names are not
-           rewritten by them. */
-        for (int i = 0; i < t.uniform_count; i++) {
-            buf_printf(&outbuf, "#define %s _rmmz.%s\n",
-                       t.uniforms[i].name, t.uniforms[i].name);
-        }
+        buf_puts(&outbuf, "};\n");
     }
 
     if (uses_frag_color) {
         buf_puts(&outbuf, "layout(location = 0) out vec4 _rmmzFragColor;\n");
         buf_puts(&outbuf, "#define gl_FragColor _rmmzFragColor\n");
     }
+    /* Renaming through #define is safe here: these are never declared by the
+       block above, so every occurrence really is the shader's own identifier. */
+    for (size_t i = 0; i < sizeof(RESERVED_IN_450) / sizeof(RESERVED_IN_450[0]); i++) {
+        if (contains_word(src, RESERVED_IN_450[i])) {
+            buf_printf(&outbuf, "#define %s _rmmz_%s\n",
+                       RESERVED_IN_450[i], RESERVED_IN_450[i]);
+        }
+    }
+
     buf_puts(&outbuf, "#define texture2D texture\n");
     buf_puts(&outbuf, "#define textureCube texture\n");
     buf_puts(&outbuf, "#define texture2DProj textureProj\n");
@@ -288,6 +316,7 @@ bool glsl_translate_fragment(const char *source, GlslTranslation *out)
 
     free(body.data);
     free(src);
+    src = NULL;
 
     t.source = outbuf.data;
     *out = t;
