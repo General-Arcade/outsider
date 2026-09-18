@@ -11,6 +11,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # Options
+include(CMakeDependentOption)
 option(RMMZ_BUILD_TESTS "Build tests" ON)
 option(RMMZ_WIN32_CONSOLE "Windows: build outsider as a console application instead of a GUI application" OFF)
 
@@ -22,6 +23,13 @@ set_property(CACHE RMMZ_RENDER_BACKEND PROPERTY STRINGS gpu gl)
 if(NOT RMMZ_RENDER_BACKEND MATCHES "^(gl|gpu)$")
     message(FATAL_ERROR "RMMZ_RENDER_BACKEND must be gpu or gl")
 endif()
+
+# Compile shaders a game's plugins supply at run time. Only the GPU backend
+# needs this: SDL3 takes bytecode rather than source, so without it a custom
+# plugin filter draws unfiltered.
+cmake_dependent_option(RMMZ_RUNTIME_SHADERS
+    "Compile game-supplied shaders at run time (GPU backend)" ON
+    "RMMZ_RENDER_BACKEND STREQUAL gpu" OFF)
 
 # SDL3 takes shader bytecode, and only runs a backend whose format we ship:
 # DXIL for D3D12, SPIR-V for Vulkan, MSL for Metal. Check the generated header
@@ -174,6 +182,11 @@ target_link_libraries(outsider PRIVATE
     soloud
     ${RMMZ_SYS_LIBS}
 )
+
+if(RMMZ_RUNTIME_SHADERS)
+    target_link_libraries(outsider PRIVATE sdl_shadercross glslang)
+    target_compile_definitions(outsider PRIVATE RMMZ_RUNTIME_SHADERS)
+endif()
 
 if(RMMZ_USE_EFFEKSEER)
     target_link_libraries(outsider PRIVATE Effekseer EffekseerRendererGL)

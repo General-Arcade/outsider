@@ -79,6 +79,88 @@ target_compile_definitions(soloud PRIVATE WITH_SDL2_STATIC WITH_NULL
 target_link_libraries(soloud PRIVATE SDL3::SDL3)
 set_target_properties(soloud PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# Runtime shader compilation — lets the GPU backend build shaders a game's
+# plugins supply at run time, which SDL3 otherwise cannot accept (it takes
+# bytecode, not source).
+#
+#   glslang        GLSL -> SPIR-V
+#   SPIRV-Cross    SPIR-V -> HLSL / MSL
+#   SDL_shadercross wraps both, and reaches SDL's GPU shader objects
+#
+# DXC is deliberately left out: shadercross reaches DXBC through Windows' own
+# d3dcompiler_47.dll, which SDL's D3D12 backend accepts, so none of this ships
+# a redistributable compiler DLL.
+if(RMMZ_RUNTIME_SHADERS)
+    set(RMMZ_SHADER_DEPS_TAG_GLSLANG      "16.6.0")
+    set(RMMZ_SHADER_DEPS_TAG_SPIRV_CROSS  "vulkan-sdk-1.4.357.0")
+
+    FetchContent_Declare(
+        glslang
+        GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+        GIT_TAG        ${RMMZ_SHADER_DEPS_TAG_GLSLANG}
+        GIT_SHALLOW    TRUE
+    )
+    # ENABLE_OPT pulls in SPIRV-Tools purely to optimise output we do not need
+    # optimised; leaving it off keeps the dependency tree to glslang alone.
+    set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+    set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+    set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+    set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(glslang)
+
+    FetchContent_Declare(
+        spirv_cross
+        GIT_REPOSITORY https://github.com/KhronosGroup/SPIRV-Cross.git
+        GIT_TAG        ${RMMZ_SHADER_DEPS_TAG_SPIRV_CROSS}
+        GIT_SHALLOW    TRUE
+    )
+    set(SPIRV_CROSS_SHARED OFF CACHE BOOL "" FORCE)
+    set(SPIRV_CROSS_STATIC ON CACHE BOOL "" FORCE)
+    set(SPIRV_CROSS_CLI OFF CACHE BOOL "" FORCE)
+    set(SPIRV_CROSS_ENABLE_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPIRV_CROSS_ENABLE_C_API ON CACHE BOOL "" FORCE)
+    set(SPIRV_CROSS_SKIP_INSTALL ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(spirv_cross)
+
+    # SDL_shadercross looks for an *installed* SPIRV-Cross package under the
+    # underscored name before falling back; aliasing the target we just built
+    # lets it use that instead of requiring one on the system.
+    if(TARGET spirv-cross-c AND NOT TARGET spirv_cross_c)
+        add_library(spirv_cross_c ALIAS spirv-cross-c)
+    endif()
+
+    # The library is a single source file. Building it directly, rather than
+    # through its own CMakeLists, avoids its unconditional export() rule --
+    # which insists every dependency belong to an export set, something an
+    # in-tree SPIRV-Cross does not.
+    # No submodules: those are DirectXShaderCompiler and SPIRV-Tools, neither
+    # of which this build uses, and DXC alone is a multi-gigabyte clone.
+    FetchContent_Declare(
+        sdl_shadercross
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL_shadercross.git
+        GIT_TAG        main
+        GIT_SUBMODULES ""
+    )
+    FetchContent_GetProperties(sdl_shadercross)
+    if(NOT sdl_shadercross_POPULATED)
+        FetchContent_Populate(sdl_shadercross)
+    endif()
+
+    add_library(sdl_shadercross STATIC
+        ${sdl_shadercross_SOURCE_DIR}/src/SDL_shadercross.c
+    )
+    target_include_directories(sdl_shadercross PUBLIC
+        ${sdl_shadercross_SOURCE_DIR}/include
+    )
+    # Leaving SDL_SHADERCROSS_DXC undefined drops the DirectXShaderCompiler
+    # path. DXBC is compiled separately through Windows' own d3dcompiler_47,
+    # and SDL's D3D12 backend accepts DXBC, so nothing here ships a
+    # redistributable compiler.
+    target_link_libraries(sdl_shadercross PUBLIC SDL3::SDL3 spirv-cross-c)
+    set_target_properties(sdl_shadercross PROPERTIES POSITION_INDEPENDENT_CODE ON)
+endif()
+
 # Effekseer particle effects SDK (optional — stub backend used when unavailable)
 option(RMMZ_USE_EFFEKSEER "Build with real Effekseer SDK (requires OpenGL)" OFF)
 if(RMMZ_USE_EFFEKSEER)
