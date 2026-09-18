@@ -160,16 +160,23 @@ static SDL_GPUShader *load_shader(const char *name, int sampler_count,
         SDL_GPUShaderFormat have = SDL_GetGPUShaderFormats(G.device);
         SDL_GPUShaderCreateInfo info;
         SDL_zero(info);
+        /* Vulkan, D3D12 and Metal respectively; MSL is source text rather
+           than bytecode, which SDL's Metal backend accepts as-is. */
         if ((have & SDL_GPU_SHADERFORMAT_SPIRV) && b->spirv) {
             info.code = b->spirv;
             info.code_size = b->spirv_size;
             info.format = SDL_GPU_SHADERFORMAT_SPIRV;
-        } else if (have & SDL_GPU_SHADERFORMAT_DXIL) {
+        } else if ((have & SDL_GPU_SHADERFORMAT_DXIL) && b->dxil) {
             info.code = b->dxil;
             info.code_size = b->dxil_size;
             info.format = SDL_GPU_SHADERFORMAT_DXIL;
+        } else if ((have & SDL_GPU_SHADERFORMAT_MSL) && b->msl) {
+            info.code = b->msl;
+            info.code_size = b->msl_size;
+            info.format = SDL_GPU_SHADERFORMAT_MSL;
         } else {
-            fprintf(stderr, "gpu: no shader format for %s\n", name);
+            fprintf(stderr, "gpu: no shader format for %s "
+                    "(device accepts 0x%x)\n", name, (unsigned)have);
             return NULL;
         }
         info.entrypoint = "main";
@@ -329,7 +336,8 @@ bool gpu_backend_init(SDL_Window *window)
     G.window = window;
 
     G.device = SDL_CreateGPUDevice(
-        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL, false, NULL);
+        SDL_GPU_SHADERFORMAT_SPIRV | SDL_GPU_SHADERFORMAT_DXIL |
+        SDL_GPU_SHADERFORMAT_MSL, false, NULL);
     if (!G.device) {
         fprintf(stderr, "gpu: SDL_CreateGPUDevice failed: %s\n", SDL_GetError());
         return false;

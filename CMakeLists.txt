@@ -23,22 +23,28 @@ if(NOT RMMZ_RENDER_BACKEND MATCHES "^(gl|gpu)$")
     message(FATAL_ERROR "RMMZ_RENDER_BACKEND must be gpu or gl")
 endif()
 
-# SDL3 takes shader bytecode, and only runs a backend whose format we ship.
-# tools/compile_shaders.py emits SPIR-V only when it finds a dxc built with the
-# SPIR-V backend; with DXIL alone the only usable backend is D3D12, so the
-# runtime would build everywhere and start on Windows only. Catch that here
-# rather than at launch.
-if(RMMZ_RENDER_BACKEND STREQUAL "gpu" AND NOT WIN32)
+# SDL3 takes shader bytecode, and only runs a backend whose format we ship:
+# DXIL for D3D12, SPIR-V for Vulkan, MSL for Metal. Check the generated header
+# carries the one this platform needs, so a missing format fails here instead
+# of producing a runtime that builds and then cannot create a device.
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    if(APPLE)
+        set(RMMZ_NEEDED_SHADER "msl")
+    elseif(WIN32)
+        set(RMMZ_NEEDED_SHADER "dxil")
+    else()
+        set(RMMZ_NEEDED_SHADER "spirv")
+    endif()
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/rendering/shaders/shaders_generated.h"
          RMMZ_SHADER_BLOBS_SRC)
-    string(FIND "${RMMZ_SHADER_BLOBS_SRC}" "_spv[]" RMMZ_HAVE_SPIRV)
+    string(FIND "${RMMZ_SHADER_BLOBS_SRC}" "_${RMMZ_NEEDED_SHADER}[]" RMMZ_HAVE_SHADER)
     unset(RMMZ_SHADER_BLOBS_SRC)
-    if(RMMZ_HAVE_SPIRV EQUAL -1)
+    if(RMMZ_HAVE_SHADER EQUAL -1)
         message(FATAL_ERROR
-            "RMMZ_RENDER_BACKEND=gpu needs SPIR-V shaders on this platform, but "
-            "src/rendering/shaders/shaders_generated.h contains DXIL only.\n"
-            "Regenerate with a SPIR-V-capable dxc (the Vulkan SDK ships one):\n"
-            "    python tools/compile_shaders.py\n"
+            "RMMZ_RENDER_BACKEND=gpu needs ${RMMZ_NEEDED_SHADER} shaders on this "
+            "platform, and src/rendering/shaders/shaders_generated.h has none.\n"
+            "Regenerate them with SDL_shadercross:\n"
+            "    python tools/compile_shaders.py --shadercross /path/to/shadercross\n"
             "or build the OpenGL backend with -DRMMZ_RENDER_BACKEND=gl.")
     endif()
 endif()

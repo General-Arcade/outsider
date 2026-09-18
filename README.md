@@ -188,12 +188,20 @@ SDL3 having no immediate mode:
   and falls back to drawing unfiltered, exactly as it does when GL rejects a
   shader.
 
-`tools/compile_shaders.py` emits DXIL, and SPIR-V as well when it finds a dxc
-built with the SPIR-V backend (the Vulkan SDK ships one; the one in the Windows
-SDK does not). **Without SPIR-V the GPU backend runs on D3D12, so on Windows
-only** — configuring the default backend on another platform fails with a
-message pointing back here rather than building something that cannot start.
-Build with `-DRMMZ_RENDER_BACKEND=gl` until the SPIR-V shaders are generated.
+`tools/compile_shaders.py` emits all three formats through
+[SDL_shadercross](https://github.com/libsdl-org/SDL_shadercross), which knows
+the resource-binding rules each backend expects:
+
+| Platform | Backend | Shader format |
+|----------|---------|---------------|
+| Windows | D3D12 | DXIL |
+| Linux | Vulkan | SPIR-V |
+| macOS | Metal | MSL |
+
+The generated header is checked in, so only editing a shader needs the tool.
+Configuring the GPU backend on a platform whose format is missing from that
+header fails at CMake time with a message pointing back here, rather than
+building a runtime that cannot create a device.
 
 ## Usage
 
