@@ -21,10 +21,15 @@ an object with one action key plus optional modifiers. Actions:
     eval: "js"                    run arbitrary JS (unfreezes the game first)
 
 Modifiers: shot: "name" takes a screenshot after the action (after settle
-frames, default 30); if: "js expr" skips the step when false; timeout in
-seconds for waits (default 60); nudge: "ok" or ["down", "ok"] presses a key
-(keys in rotation) every nudge_every frames (default 120) while a wait_scene
-has not been reached, for "press any key" or pre-title scenes.
+frames, default 30, plus up to `stabilize` more frames, off by default,
+until the scene stops changing: useful for menus that animate themselves in,
+harmful for scenes that never stand still, since the extra frames let the two
+players drift apart); if: "js expr" skips the step when false; timeout in
+seconds for waits (default 60); nudge: "ok" presses a key every nudge_every
+frames (default 120) while a wait_scene has not been reached, for "press any
+key" or pre-title scenes (a single key is chosen per press: "down" when the
+active window's cursor rests on nothing, else the key given; a list is
+pressed in rotation).
 
 The game only advances inside actions and is frozen between them, so the
 frame a screenshot shows depends on the steps alone, not on how long the
@@ -38,6 +43,7 @@ import time
 from .drivers import DriverError, JsError
 
 DEFAULT_SETTLE = 30
+DEFAULT_STABILIZE = 0     # extra frames a shot may wait for animations to end
 DEFAULT_TIMEOUT = 60.0
 FPS = 60
 
@@ -237,6 +243,18 @@ class Runner:
             self.wait_frames(settle, step)
         else:
             self._eval("__ev.freeze()", step)
+        # Scenes that animate themselves in (menus built with tween libraries)
+        # are not done after a fixed number of frames, and the same count of
+        # frames is not the same amount of animation on both players. Give
+        # them extra frames until the picture stops changing.
+        stabilize = int(step.get("stabilize", DEFAULT_STABILIZE))
+        if stabilize > 0:
+            try:
+                self._eval("__ev.waitStable(%d, 8)" % stabilize, step,
+                           timeout=stabilize / FPS * 1.5 + 30.0)
+            except JsError as e:
+                # A scene that never stops moving is still worth a picture.
+                result.detail = "unsettled: %s" % first_line(str(e))
         scene = self._eval("__ev.sceneName()", step)
         self.screenshot(step["shot"])
         result.shot = step["shot"]

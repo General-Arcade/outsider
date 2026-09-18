@@ -1,0 +1,18 @@
+{
+  "name": "pocket-mirror",
+  "description": "Pocket Mirror ~ GoldenerTraum: splash and language screens before the title, menus that animate themselves in, and no usable status scene.",
+  "steps": [
+    {"wait_scene": "Scene_Title", "nudge": "ok", "nudge_every": 60, "timeout": 120, "settle": 60, "stabilize": 240, "shot": "title"},
+    {"scene": "Scene_Options", "stabilize": 240, "shot": "options"},
+    {"scene": "Scene_Load", "stabilize": 240, "shot": "load"},
+    {"new_game": true, "settle": 120, "stabilize": 240, "shot": "map"},
+    {"key": "down", "hold": 40, "after": 10, "shot": "map_walk", "settle": 0},
+    {"scene": "Scene_Menu", "stabilize": 240, "shot": "menu", "keep": true},
+    {"scene": "Scene_Item", "stabilize": 240, "shot": "item"},
+    {"scene": "Scene_Skill", "stabilize": 240, "shot": "skill"},
+    {"scene": "Scene_Equip", "stabilize": 240, "shot": "equip"},
+    {"pop": true},
+    {"message": "The quick brown fox jumps over the lazy dog. 0123456789", "settle": 120, "stabilize": 240, "shot": "message"},
+    {"keys": ["ok", "ok", "ok"], "wait": 30}
+  ]
+}

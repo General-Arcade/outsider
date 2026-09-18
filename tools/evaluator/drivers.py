@@ -18,6 +18,7 @@ line protocol documented in src/engine/game_loop.h.
 import json
 import os
 import queue
+import re
 import socket
 import subprocess
 import threading
@@ -40,6 +41,38 @@ def free_port():
     port = s.getsockname()[1]
     s.close()
     return port
+
+
+def steam_app_id(game_dir):
+    """App id of a game installed under steamapps/common/<dir>, from Steam's
+    appmanifest files; None when the folder is not a Steam install."""
+    parts = os.path.abspath(game_dir).replace("\\", "/").split("/")
+    lower = [p.lower() for p in parts]
+    if "steamapps" not in lower or "common" not in lower:
+        return None
+    i = lower.index("common")
+    if i + 1 >= len(parts) or lower[i - 1] != "steamapps":
+        return None
+    install_dir = parts[i + 1]
+    steamapps = "/".join(parts[:i])
+    try:
+        names = os.listdir(steamapps)
+    except OSError:
+        return None
+    for name in names:
+        if not (name.startswith("appmanifest_") and name.endswith(".acf")):
+            continue
+        try:
+            with open(os.path.join(steamapps, name), "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        m = re.search(r'"installdir"\s+"([^"]+)"', text)
+        if m and m.group(1) == install_dir:
+            m = re.search(r'"appid"\s+"(\d+)"', text)
+            if m:
+                return m.group(1)
+    return None
 
 
 def kill_tree(proc):
@@ -75,9 +108,17 @@ class NwjsDriver:
             # Keep the run out of the player's real profile (and away from
             # any other instance of the same game that may still be running).
             args.append("--user-data-dir=%s" % os.path.abspath(profile_dir))
+        # Greenworks initialises Steam with steam_appid.txt, which for a demo
+        # may name the full game; tell the Steam API which app this really is
+        # so the original does not stop on an error screen.
+        env = dict(os.environ)
+        app_id = steam_app_id(self.game_dir)
+        if app_id:
+            env["SteamAppId"] = app_id
+            env["SteamGameId"] = app_id
         self.log = open(log_path, "wb") if log_path else subprocess.DEVNULL
         self.proc = subprocess.Popen(args, cwd=self.game_dir, stdout=self.log,
-                                     stderr=subprocess.STDOUT)
+                                     stderr=subprocess.STDOUT, env=env)
         try:
             target = cdp.wait_for_page(self.port, timeout=boot_timeout)
             self.session = cdp.CdpSession(target["webSocketDebuggerUrl"])

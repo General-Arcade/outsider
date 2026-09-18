@@ -130,11 +130,11 @@
             w.reject(err);
         } else if (done) {
             ev.waiter = null;
-            if (w.freeze) ev.frozen = true;
+            if (w.freeze) ev.freeze();
             w.resolve(ev.frame);
         } else if (--w.timeout <= 0) {
             ev.waiter = null;
-            if (w.freeze) ev.frozen = true;
+            if (w.freeze) ev.freeze();
             w.reject(new Error("visual-eval: timed out waiting for " + w.label +
                                " (" + JSON.stringify(ev.status()) + ")"));
         }
@@ -184,7 +184,7 @@
         if (ev.waiter) return Promise.reject(new Error("visual-eval: another wait is active"));
         return engineReady().then(function() {
             startStallCheck();
-            ev.frozen = false;
+            ev.unfreeze();
             return new Promise(function(resolve, reject) {
                 ev.waiter = {
                     test: test, timeout: timeoutFrames || 3600, label: label || "condition",
@@ -192,6 +192,51 @@
                 };
             });
         });
+    };
+
+    /* A cheap fingerprint of what the scene looks like: every node's
+       position, scale, opacity, visibility and source rectangle. Two frames
+       with the same fingerprint are the same picture as far as the display
+       list is concerned. */
+    function sceneSignature() {
+        var parts = [];
+        function walk(c, depth) {
+            if (!c || depth > 6 || parts.length > 400) return;
+            var f = c._frame;
+            parts.push(
+                c.constructor.name + "|" +
+                Math.round(c.x) + "," + Math.round(c.y) + "," +
+                Math.round(c.width || 0) + "," + Math.round(c.height || 0) + "," +
+                (c.scale ? (+c.scale.x).toFixed(2) + "," + (+c.scale.y).toFixed(2) : "") + "," +
+                (+c.alpha).toFixed(2) + "," + (c.opacity !== undefined ? Math.round(c.opacity) : "") + "," +
+                (c.rotation ? (+c.rotation).toFixed(3) : "") + "," + (c.visible ? 1 : 0) + "," +
+                (f ? f.x + ":" + f.y + ":" + f.width + ":" + f.height : ""));
+            if (c.children) {
+                for (var i = 0; i < c.children.length; i++) walk(c.children[i], depth + 1);
+            }
+        }
+        try {
+            walk(SceneManager._scene, 0);
+        } catch (e) {
+            return "error";
+        }
+        return parts.join(";");
+    }
+
+    /* Run until the scene has looked the same for `quiet` frames (animations
+       finished), or `maxFrames` have passed, then freeze. Screenshots taken
+       after this show the same picture on both players even when the scene
+       animates its way in on a wall-clock timer. */
+    ev.waitStable = function(maxFrames, quiet) {
+        var quietNeeded = quiet || 8;
+        var last = null, same = 0, spent = 0;
+        return ev.waitFor(function() {
+            var sig = sceneSignature();
+            same = (sig === last) ? same + 1 : 0;
+            last = sig;
+            spent++;
+            return same >= quietNeeded || spent >= (maxFrames || 180);
+        }, (maxFrames || 180) + 60, "a still scene");
     };
 
     /* Advance exactly n logical frames, then freeze. */
@@ -231,15 +276,38 @@
     /* Wait for a scene; with nudgeKey, press that key every nudgeEvery
        frames while waiting (title screens behind "press any key" or
        pre-title map scenes). */
+    /* The key a nudge should press now: on an active selectable window
+       whose cursor rests on nothing yet, "down" (puts it on the first
+       entry); otherwise "ok" (confirms the first entry, or dismisses a
+       "press any key" screen). Same choice on both players, whatever frame
+       the nudge lands on. */
+    function nudgeKeyFor(fallback) {
+        var s = SceneManager._scene;
+        var layer = s && s._windowLayer;
+        if (layer && layer.children) {
+            for (var i = 0; i < layer.children.length; i++) {
+                var w = layer.children[i];
+                if (w && w.active && typeof w.index === "function" && w.visible !== false) {
+                    return w.index() < 0 ? "down" : "ok";
+                }
+            }
+        }
+        return fallback;
+    }
+
     ev.waitScene = function(name, timeoutFrames, nudgeKeys, nudgeEvery) {
         var every = nudgeEvery || 120;
         var keys = !nudgeKeys ? [] : (Array.isArray(nudgeKeys) ? nudgeKeys : [nudgeKeys]);
         var lastPress = -every, next = 0, code = 0;
         return ev.waitFor(function() {
             if (ev.sceneReady(name)) return true;
-            if (keys.length) {
+            /* Once the wanted scene exists, let it finish opening: a key
+               pressed while it fades in would act on it (a title screen
+               would start the game). */
+            if (keys.length && !ev.sceneIs(name)) {
                 if (ev.frame - lastPress >= every) {
-                    code = keyCodeOf(keys[next % keys.length]);
+                    var key = keys.length === 1 ? nudgeKeyFor(keys[0]) : keys[next % keys.length];
+                    code = keyCodeOf(key);
                     next++;
                     keyEvent("keydown", code);
                     lastPress = ev.frame;
@@ -259,9 +327,25 @@
         return typeof window[name] === "function";
     };
 
+    /* Scenes that show one actor read $gameParty.menuActor(), which the menu
+       sets when the player picks a character. Pushing them straight from a
+       script would leave it null and crash the scene (in either player), so
+       select the first party member first, as the menu would. */
+    var ACTOR_SCENES = { Scene_Skill: 1, Scene_Equip: 1, Scene_Status: 1 };
+    function prepareActorScene(name) {
+        if (!ACTOR_SCENES[name]) return;
+        try {
+            if (typeof $gameParty !== "undefined" && $gameParty && !$gameParty.menuActor()) {
+                var members = $gameParty.members();
+                if (members.length) $gameParty.setMenuActor(members[0]);
+            }
+        } catch (e) {}
+    }
+
     /* Push a scene by class name; args go to SceneManager.prepareNextScene. */
     ev.pushScene = function(name, args) {
         if (!ev.hasScene(name)) return false;
+        prepareActorScene(name);
         ev.unfreeze();
         SceneManager.push(window[name]);
         if (args && args.length) SceneManager.prepareNextScene.apply(SceneManager, args);
@@ -270,6 +354,7 @@
 
     ev.gotoScene = function(name, args) {
         if (!ev.hasScene(name)) return false;
+        prepareActorScene(name);
         ev.unfreeze();
         SceneManager.goto(window[name]);
         if (args && args.length) SceneManager.prepareNextScene.apply(SceneManager, args);
