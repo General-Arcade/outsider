@@ -20,14 +20,17 @@ runs on Linux and Windows from the same source tree.
 - **GPU rendering.** Sprite batching, render targets, blend modes, tilemap
   layers and PIXI filters (ColorMatrix, Blur, Alpha) on OpenGL 4.5.
 - **Software Canvas 2D** for `Bitmap` operations (text, gradients, paths,
-  transforms) with TrueType text via stb_truetype.
+  transforms) with TrueType text via stb_truetype, including per-glyph
+  fallback to the game's other fonts and then to system fonts, so text in a
+  script the chosen font does not cover still renders.
 - **Audio** through SoLoud: OGG Vorbis and WAV, four independent buses
   (BGM, BGS, ME, SE), streaming for music, pitch and pan.
 - **Movies** (title videos, the Play Movie command) through a built-in
   MPEG-1 decoder (pl_mpeg); the packaging tools transcode the game's
   WebM/MP4 files (see [Movies](#movies)).
 - **Plugin friendly.** Common plugin needs such as `document.currentScript`,
-  `fetch()`, Steam/Greenworks stubs and PIXI filter stubs are covered.
+  `fetch()`, `<script>` elements inserted at run time, Steam/Greenworks
+  stubs, Web Audio effect nodes and PIXI filter stubs are covered.
 - **Save data compatible.** Saves are written next to the game exactly where
   the NW.js player puts them.
 - **Effekseer** particle effects through the native SDK (optional build).
@@ -48,6 +51,10 @@ assets. All screenshots below are Outsider, not the original player.
     <td align="center"><img src="screenshots/drapline.png" alt="DRAPLINE Demo running in Outsider" width="100%"><br><b>DRAPLINE Demo</b></td>
     <td align="center"><img src="screenshots/saihate-station.png" alt="Saihate Station running in Outsider" width="100%"><br><b>Saihate Station</b></td>
   </tr>
+  <tr>
+    <td align="center"><img src="screenshots/aquarium.png" alt="The Aquarium does not dance running in Outsider" width="100%"><br><b>The Aquarium does not dance</b></td>
+    <td align="center"><img src="screenshots/pocket-mirror.png" alt="Pocket Mirror ~ GoldenerTraum running in Outsider" width="100%"><br><b>Pocket Mirror ~ GoldenerTraum</b></td>
+  </tr>
 </table>
 
 | Game | Core | What it exercises |
@@ -56,14 +63,21 @@ assets. All screenshots below are Outsider, not the original player.
 | **Ann** | 1.2.0 | WOFF/OTF fonts, title and cutscene movies, VisuStella plugins, screen tints, `%`-encoded and `..` asset paths |
 | **DRAPLINE Demo** | 1.9.0 | 1920x1080, 216 plugins, 386 preloaded APNG pictures, HTML name-entry dialog, textured `PIXI.Graphics` fills, encounter effects, fullscreen-at-boot plugin |
 | **Saihate Station** | 1.8.1 | Third-party asset encryption (Art Encrypter), UTF-8 BOM data files, pre-title map with language selection, Korean and Japanese text |
+| **The Aquarium does not dance** | 1.5.0 | FOSSIL (an MV compatibility layer that replaces `main.js` through an injected `<script>`), 98 plugins, Japanese menu text rendered through system-font fallback |
+| **Pocket Mirror ~ GoldenerTraum** (demo) | 1.6.0 | 1280x720, VisuStella suite with GSAP-animated menus, sprite masks, Steam/Greenworks calls, plugins in subfolders, JPEG data stored under a `.png` name |
 
 Each game is run scene by scene against its own NW.js player with the
 [visual evaluator](#visual-evaluator): title, options, load, map, every menu
-scene, message window, shop, name entry and battle. Across the four games
-the compared scenes differ from the original by 0 to 3% of pixels, almost
-all of it font anti-aliasing (Chrome hints glyphs, stb_truetype does not).
-Gameplay flow through a battle was verified frame by frame where the game
-has one.
+scene, message window, shop, name entry and battle. Across these games the
+compared scenes differ from the original by 0 to 4% of pixels, almost all of
+it font anti-aliasing (Chrome hints glyphs, stb_truetype does not) and the
+phase of animations that run on a wall clock. Gameplay flow through a battle
+was verified frame by frame where the game has one.
+
+A game whose own boot flow or menus need different handling gets its own
+step list; `tools/evaluator/scenarios/pocket-mirror.json` is one, for a game
+that shows a splash and a language screen before the title and animates its
+menus into place.
 
 ## How It Works
 
