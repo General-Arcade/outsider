@@ -98,6 +98,8 @@ if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
         src/rendering/sprite_batch_gpu.c
         src/rendering/renderer_gpu.c
         src/rendering/filters_gpu.c
+        src/rendering/glsl_translate.c
+        src/rendering/gpu_shader_runtime.c
     )
 else()
     set(RMMZ_RENDER_SOURCES
@@ -184,7 +186,8 @@ target_link_libraries(outsider PRIVATE
 )
 
 if(RMMZ_RUNTIME_SHADERS)
-    target_link_libraries(outsider PRIVATE sdl_shadercross glslang)
+    target_link_libraries(outsider PRIVATE
+        sdl_shadercross glslang SPIRV glslang-default-resource-limits)
     target_compile_definitions(outsider PRIVATE RMMZ_RUNTIME_SHADERS)
 endif()
 

@@ -5,6 +5,8 @@
 
 #include "rendering/gpu_backend.h"
 #include "rendering/sprite_batch.h"
+#include "rendering/glsl_translate.h"
+#include "rendering/gpu_shader_runtime.h"
 #include "rendering/shaders/shaders_generated.h"
 
 #include <stdio.h>
@@ -38,6 +40,16 @@ static const float BLIT_VERTICES[] = {
      1.0f,  1.0f,  1.0f, 1.0f,
     -1.0f,  1.0f,  0.0f, 1.0f,
 };
+
+/* Shaders a game supplied at run time. */
+
+typedef struct {
+    bool                     used;
+    SDL_GPUShader           *shader;
+    /* Indexed by whether the target is the swapchain, as for built-ins. */
+    SDL_GPUGraphicsPipeline *pipelines[2];
+    GlslTranslation          layout;
+} RuntimeShader;
 
 /* Textures */
 
@@ -78,8 +90,8 @@ typedef struct {
         } sprites;
         struct {
             int      shader;
-            uint32_t texture;
-            uint32_t mask;
+            uint32_t textures[GPU_MAX_FILTER_TEXTURES];
+            int      texture_count;
             uint32_t uniform_offset;
             uint32_t uniform_size;
         } filter;
@@ -110,6 +122,10 @@ static struct {
 
     GpuTextureSlot *textures;
     uint32_t        texture_capacity;
+
+    /* Shaders compiled from a game's own GLSL, keyed by id - GPU_SHADER_COUNT. */
+    RuntimeShader  *runtime;
+    uint32_t        runtime_capacity;
 
     /* Offscreen target the frame is composed into. */
     SDL_GPUTexture *screen;
@@ -250,7 +266,11 @@ static void blend_state(int mode, SDL_GPUColorTargetBlendState *b)
     }
 }
 
-static SDL_GPUGraphicsPipeline *build_pipeline(int shader, int blend, bool swapchain)
+static SDL_GPUGraphicsPipeline *build_pipeline_for(SDL_GPUShader *vertex_shader,
+                                                   SDL_GPUShader *fragment_shader,
+                                                   bool sprite_layout,
+                                                   int shader, int blend,
+                                                   bool swapchain)
 {
     SDL_GPUVertexBufferDescription vbuf;
     SDL_zero(vbuf);
@@ -261,7 +281,7 @@ static SDL_GPUGraphicsPipeline *build_pipeline(int shader, int blend, bool swapc
     SDL_zeroa(attrs);
     int attr_count;
 
-    if (shader == GPU_SHADER_SPRITE) {
+    if (sprite_layout) {
         vbuf.pitch = sizeof(GpuVertex);
         attrs[0].location = 0; attrs[0].buffer_slot = 0;
         attrs[0].format = SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
@@ -297,8 +317,8 @@ static SDL_GPUGraphicsPipeline *build_pipeline(int shader, int blend, bool swapc
 
     SDL_GPUGraphicsPipelineCreateInfo info;
     SDL_zero(info);
-    info.vertex_shader = G.shaders[shader][0];
-    info.fragment_shader = G.shaders[shader][1];
+    info.vertex_shader = vertex_shader;
+    info.fragment_shader = fragment_shader;
     info.vertex_input_state.num_vertex_buffers = 1;
     info.vertex_input_state.vertex_buffer_descriptions = &vbuf;
     info.vertex_input_state.num_vertex_attributes = (Uint32)attr_count;
@@ -313,6 +333,32 @@ static SDL_GPUGraphicsPipeline *build_pipeline(int shader, int blend, bool swapc
     if (!p) fprintf(stderr, "gpu: pipeline (shader %d blend %d): %s\n",
                     shader, blend, SDL_GetError());
     return p;
+}
+
+static SDL_GPUGraphicsPipeline *build_pipeline(int shader, int blend, bool swapchain)
+{
+    return build_pipeline_for(G.shaders[shader][0], G.shaders[shader][1],
+                              shader == GPU_SHADER_SPRITE, shader, blend, swapchain);
+}
+
+/* A plugin shader reuses the built-in fullscreen vertex stage; only the
+   fragment stage came from the game. */
+static SDL_GPUGraphicsPipeline *runtime_pipeline_for(uint32_t id, bool swapchain)
+{
+    uint32_t index = id - GPU_SHADER_COUNT;
+    if (index >= G.runtime_capacity || !G.runtime[index].used) return NULL;
+    RuntimeShader *rs = &G.runtime[index];
+    int slot = swapchain ? 1 : 0;
+    if (!rs->pipelines[slot]) {
+        /* Not the shipped vertex shader: on D3D12 the runtime compiler emits
+           DXBC and the shipped bytecode is DXIL, which a single pipeline
+           cannot mix. */
+        SDL_GPUShader *vert = gpu_shader_runtime_fullscreen_vertex(G.device);
+        if (!vert) return NULL;
+        rs->pipelines[slot] = build_pipeline_for(
+            vert, rs->shader, false, (int)id, BLEND_MODE_NORMAL, swapchain);
+    }
+    return rs->pipelines[slot];
 }
 
 static SDL_GPUGraphicsPipeline *pipeline_for(int shader, int blend, bool swapchain)
@@ -468,6 +514,18 @@ void gpu_backend_shutdown(void)
         for (int k = 0; k < 2; k++)
             if (G.shaders[s][k]) SDL_ReleaseGPUShader(G.device, G.shaders[s][k]);
     }
+    for (uint32_t i = 0; i < G.runtime_capacity; i++) {
+        if (!G.runtime[i].used) continue;
+        for (int k = 0; k < 2; k++) {
+            if (G.runtime[i].pipelines[k])
+                SDL_ReleaseGPUGraphicsPipeline(G.device, G.runtime[i].pipelines[k]);
+        }
+        if (G.runtime[i].shader) SDL_ReleaseGPUShader(G.device, G.runtime[i].shader);
+        glsl_translation_free(&G.runtime[i].layout);
+    }
+    free(G.runtime);
+    gpu_shader_runtime_shutdown();
+
     if (G.screen) SDL_ReleaseGPUTexture(G.device, G.screen);
     if (G.quad_buffer) SDL_ReleaseGPUBuffer(G.device, G.quad_buffer);
     if (G.index_buffer) SDL_ReleaseGPUBuffer(G.device, G.index_buffer);
@@ -776,10 +834,12 @@ void gpu_record_sprites(const GpuVertex *verts, int quad_count, uint32_t texture
     G.vertex_count += needed;
 }
 
-void gpu_record_filter(int shader, uint32_t texture, uint32_t mask_texture,
+void gpu_record_filter(int shader, const uint32_t *textures, int texture_count,
                        const void *uniforms, uint32_t uniform_size)
 {
-    if (shader <= 0 || shader >= GPU_SHADER_COUNT) return;
+    if (shader <= 0 || !textures || texture_count <= 0) return;
+    if (texture_count > GPU_MAX_FILTER_TEXTURES)
+        texture_count = GPU_MAX_FILTER_TEXTURES;
 
     uint32_t offset = G.uniform_size;
     if (uniforms && uniform_size) {
@@ -798,10 +858,80 @@ void gpu_record_filter(int shader, uint32_t texture, uint32_t mask_texture,
     GpuCmd *c = push_cmd(CMD_FILTER);
     if (!c) return;
     c->filter.shader = shader;
-    c->filter.texture = texture;
-    c->filter.mask = mask_texture;
+    for (int i = 0; i < texture_count; i++) c->filter.textures[i] = textures[i];
+    c->filter.texture_count = texture_count;
     c->filter.uniform_offset = offset;
     c->filter.uniform_size = uniform_size;
+}
+
+/* Runtime shaders */
+
+uint32_t gpu_runtime_shader_create(const char *source)
+{
+    if (!G.ready || !source) return 0;
+    if (!gpu_shader_runtime_available() && !gpu_shader_runtime_init()) return 0;
+
+    GlslTranslation xlat;
+    if (!glsl_translate_fragment(source, &xlat)) {
+        fprintf(stderr, "gpu: plugin shader uses something the rewrite "
+                        "cannot express; drawing unfiltered\n");
+        return 0;
+    }
+
+    SDL_GPUShader *shader = gpu_shader_runtime_compile(
+        G.device, xlat.source, false, xlat.sampler_count,
+        xlat.uniform_size ? 1 : 0);
+    if (!shader) {
+        glsl_translation_free(&xlat);
+        return 0;
+    }
+
+    uint32_t index = G.runtime_capacity;
+    for (uint32_t i = 0; i < G.runtime_capacity; i++) {
+        if (!G.runtime[i].used) { index = i; break; }
+    }
+    if (index == G.runtime_capacity) {
+        uint32_t grown = G.runtime_capacity ? G.runtime_capacity * 2 : 8;
+        RuntimeShader *r = realloc(G.runtime, grown * sizeof(*r));
+        if (!r) {
+            SDL_ReleaseGPUShader(G.device, shader);
+            glsl_translation_free(&xlat);
+            return 0;
+        }
+        memset(r + G.runtime_capacity, 0,
+               (grown - G.runtime_capacity) * sizeof(*r));
+        G.runtime = r;
+        G.runtime_capacity = grown;
+    }
+
+    G.runtime[index].used = true;
+    G.runtime[index].shader = shader;
+    G.runtime[index].layout = xlat;
+    return GPU_SHADER_COUNT + index;
+}
+
+void gpu_runtime_shader_destroy(uint32_t id)
+{
+    if (id < GPU_SHADER_COUNT) return;
+    uint32_t index = id - GPU_SHADER_COUNT;
+    if (index >= G.runtime_capacity || !G.runtime[index].used) return;
+
+    gpu_submit();
+    RuntimeShader *rs = &G.runtime[index];
+    for (int i = 0; i < 2; i++) {
+        if (rs->pipelines[i]) SDL_ReleaseGPUGraphicsPipeline(G.device, rs->pipelines[i]);
+    }
+    if (rs->shader) SDL_ReleaseGPUShader(G.device, rs->shader);
+    glsl_translation_free(&rs->layout);
+    memset(rs, 0, sizeof(*rs));
+}
+
+const struct GlslTranslation *gpu_runtime_shader_layout(uint32_t id)
+{
+    if (id < GPU_SHADER_COUNT) return NULL;
+    uint32_t index = id - GPU_SHADER_COUNT;
+    if (index >= G.runtime_capacity || !G.runtime[index].used) return NULL;
+    return &G.runtime[index].layout;
 }
 
 /* Replay */
@@ -890,26 +1020,23 @@ static void replay_filter(const GpuCmd *c)
     if (!G.pass) return;
 
     SDL_GPUGraphicsPipeline *pipe =
-        pipeline_for(c->filter.shader, BLEND_MODE_NORMAL, false);
+        ((uint32_t)c->filter.shader >= GPU_SHADER_COUNT)
+            ? runtime_pipeline_for((uint32_t)c->filter.shader, false)
+            : pipeline_for(c->filter.shader, BLEND_MODE_NORMAL, false);
     if (!pipe) return;
     SDL_BindGPUGraphicsPipeline(G.pass, pipe);
 
     SDL_GPUBufferBinding vb = { G.quad_buffer, 0 };
     SDL_BindGPUVertexBuffers(G.pass, 0, &vb, 1);
 
-    SDL_GPUTextureSamplerBinding tsb[2];
+    SDL_GPUTextureSamplerBinding tsb[GPU_MAX_FILTER_TEXTURES];
     SDL_zeroa(tsb);
-    tsb[0].texture = gpu_texture_handle(c->filter.texture, NULL, NULL);
-    tsb[0].sampler = sampler_for(c->filter.texture);
-    if (!tsb[0].texture) return;
-    int count = 1;
-    if (c->filter.shader == GPU_SHADER_MASK) {
-        tsb[1].texture = gpu_texture_handle(c->filter.mask, NULL, NULL);
-        tsb[1].sampler = sampler_for(c->filter.mask);
-        if (!tsb[1].texture) return;
-        count = 2;
+    for (int i = 0; i < c->filter.texture_count; i++) {
+        tsb[i].texture = gpu_texture_handle(c->filter.textures[i], NULL, NULL);
+        tsb[i].sampler = sampler_for(c->filter.textures[i]);
+        if (!tsb[i].texture) return;
     }
-    SDL_BindGPUFragmentSamplers(G.pass, 0, tsb, (Uint32)count);
+    SDL_BindGPUFragmentSamplers(G.pass, 0, tsb, (Uint32)c->filter.texture_count);
 
     if (c->filter.uniform_size) {
         SDL_PushGPUFragmentUniformData(G.cmd_buffer, 0,

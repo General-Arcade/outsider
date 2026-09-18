@@ -627,3 +627,12 @@ if(RMMZ_TEST_GAME_DIR)
     set_tests_properties(plugins storage acceptance PROPERTIES
         ENVIRONMENT "RMMZ_TEST_GAME_DIR=${RMMZ_TEST_GAME_DIR}")
 endif()
+
+# GLSL translation tests (pure string rewriting; no SDL or GPU needed)
+add_executable(test_glsl_translate
+    test_glsl_translate.c
+    ${CMAKE_SOURCE_DIR}/src/rendering/glsl_translate.c
+)
+target_include_directories(test_glsl_translate PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(test_glsl_translate PRIVATE ${RMMZ_SYS_LIBS})
+add_test(NAME glsl_translate COMMAND test_glsl_translate)

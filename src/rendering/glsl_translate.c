@@ -1,0 +1,325 @@
+/*
+ * Copyright (c) 2026 General Arcade (Pte. Ltd.)
+ * SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+ */
+
+#include "rendering/glsl_translate.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* A growable output buffer. */
+typedef struct {
+    char  *data;
+    size_t len;
+    size_t cap;
+    bool   failed;
+} Buf;
+
+static void buf_add(Buf *b, const char *text, size_t n)
+{
+    if (b->failed) return;
+    if (b->len + n + 1 > b->cap) {
+        size_t cap = b->cap ? b->cap : 1024;
+        while (cap < b->len + n + 1) cap *= 2;
+        char *grown = realloc(b->data, cap);
+        if (!grown) { b->failed = true; return; }
+        b->data = grown;
+        b->cap = cap;
+    }
+    memcpy(b->data + b->len, text, n);
+    b->len += n;
+    b->data[b->len] = '\0';
+}
+
+static void buf_puts(Buf *b, const char *text)
+{
+    buf_add(b, text, strlen(text));
+}
+
+static void buf_printf(Buf *b, const char *fmt, ...)
+{
+    char tmp[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
+    va_end(ap);
+    if (n > 0) buf_add(b, tmp, (size_t)n < sizeof(tmp) ? (size_t)n : sizeof(tmp) - 1);
+}
+
+/* std140 layout for the types a plugin filter can actually set from JS. */
+typedef struct {
+    const char *name;
+    uint32_t    size;
+    uint32_t    align;
+    uint32_t    components;
+} GlslType;
+
+static const GlslType TYPES[] = {
+    { "float", 4,  4,  1 },
+    { "int",   4,  4,  1 },
+    { "bool",  4,  4,  1 },
+    { "vec2",  8,  8,  2 },
+    { "vec3",  12, 16, 3 },
+    { "vec4",  16, 16, 4 },
+    { "mat2",  32, 16, 4 },
+    { "mat3",  48, 16, 9 },
+    { "mat4",  64, 16, 16 },
+};
+
+static const GlslType *find_type(const char *name)
+{
+    for (size_t i = 0; i < sizeof(TYPES) / sizeof(TYPES[0]); i++) {
+        if (strcmp(TYPES[i].name, name) == 0) return &TYPES[i];
+    }
+    return NULL;
+}
+
+static bool is_sampler_type(const char *name)
+{
+    return strncmp(name, "sampler", 7) == 0;
+}
+
+static uint32_t align_up(uint32_t value, uint32_t alignment)
+{
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+/* Strip // and /* *\/ comments so declarations can be matched by keyword
+   without a comment smuggling one in. Newlines are preserved so the compiler's
+   error line numbers still mean something. */
+static char *strip_comments(const char *src)
+{
+    size_t n = strlen(src);
+    char *out = malloc(n + 1);
+    if (!out) return NULL;
+    size_t o = 0;
+    for (size_t i = 0; i < n; ) {
+        if (src[i] == '/' && src[i + 1] == '/') {
+            while (i < n && src[i] != '\n') i++;
+        } else if (src[i] == '/' && src[i + 1] == '*') {
+            i += 2;
+            while (i < n && !(src[i] == '*' && src[i + 1] == '/')) {
+                if (src[i] == '\n') out[o++] = '\n';
+                i++;
+            }
+            i += 2;
+        } else {
+            out[o++] = src[i++];
+        }
+    }
+    out[o] = '\0';
+    return out;
+}
+
+/* Read the next whitespace-delimited word, returning how far it advanced. */
+static const char *next_word(const char *p, char *out, size_t out_size)
+{
+    while (*p && (unsigned char)*p <= ' ') p++;
+    size_t i = 0;
+    while (*p && ((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+                  (*p >= '0' && *p <= '9') || *p == '_')) {
+        if (i + 1 < out_size) out[i++] = *p;
+        p++;
+    }
+    out[i] = '\0';
+    return p;
+}
+
+static bool starts_with_word(const char *p, const char *word)
+{
+    size_t n = strlen(word);
+    if (strncmp(p, word, n) != 0) return false;
+    char after = p[n];
+    return !((after >= 'a' && after <= 'z') || (after >= 'A' && after <= 'Z') ||
+             (after >= '0' && after <= '9') || after == '_');
+}
+
+bool glsl_translate_fragment(const char *source, GlslTranslation *out)
+{
+    if (!source || !out) return false;
+
+    char *src = strip_comments(source);
+    if (!src) return false;
+
+    GlslTranslation t;
+    memset(&t, 0, sizeof(t));
+
+    Buf body = { 0 };      /* everything that is not a declaration we rewrote */
+    uint32_t offset = 0;
+    int varying_location = 0;
+    bool uses_frag_color = false;
+
+    int depth = 0;
+    const char *p = src;
+    const char *line_start = p;
+
+    while (*p) {
+        /* Work a line at a time; GLSL declarations are line-oriented in
+           practice, and function bodies are copied through untouched. */
+        const char *eol = strchr(p, '\n');
+        size_t line_len = eol ? (size_t)(eol - p) : strlen(p);
+        const char *line = p;
+
+        const char *scan = line;
+        while (*scan == ' ' || *scan == '\t') scan++;
+
+        bool consumed = false;
+
+        if (depth == 0) {
+            if (starts_with_word(scan, "precision")) {
+                /* Precision qualifiers are meaningless in the desktop
+                   profile; dropping the statement avoids a parse error. */
+                consumed = true;
+            } else if (starts_with_word(scan, "varying") ||
+                       starts_with_word(scan, "attribute")) {
+                /* `varying vec2 vTextureCoord;` -> an explicit input. The
+                   vertex stage writes these in declaration order. */
+                char type[GLSL_MAX_NAME], name[GLSL_MAX_NAME];
+                const char *q = next_word(scan, type, sizeof(type));   /* varying */
+                q = next_word(q, type, sizeof(type));
+                q = next_word(q, name, sizeof(name));
+                if (type[0] && name[0]) {
+                    buf_printf(&body, "layout(location = %d) in %s %s;\n",
+                               varying_location++, type, name);
+                    consumed = true;
+                }
+            } else if (starts_with_word(scan, "uniform")) {
+                char type[GLSL_MAX_NAME], name[GLSL_MAX_NAME];
+                const char *q = next_word(scan, type, sizeof(type));   /* uniform */
+                q = next_word(q, type, sizeof(type));
+                q = next_word(q, name, sizeof(name));
+
+                /* Arrays would need std140's 16-byte element stride and are
+                   not settable from the JS side anyway; leave them alone
+                   rather than mislay them in the block. */
+                bool is_array = (*q == '[');
+
+                if (is_sampler_type(type)) {
+                    if (t.sampler_count >= GLSL_MAX_SAMPLERS) goto fail;
+                    snprintf(t.samplers[t.sampler_count], GLSL_MAX_NAME, "%s", name);
+                    buf_printf(&body,
+                               "layout(set = 2, binding = %d) uniform %s %s;\n",
+                               t.sampler_count, type, name);
+                    t.sampler_count++;
+                    consumed = true;
+                } else if (!is_array) {
+                    const GlslType *gt = find_type(type);
+                    if (!gt) goto fail;
+                    if (t.uniform_count >= GLSL_MAX_UNIFORMS) goto fail;
+                    offset = align_up(offset, gt->align);
+                    GlslUniform *u = &t.uniforms[t.uniform_count++];
+                    snprintf(u->name, GLSL_MAX_NAME, "%s", name);
+                    u->offset = offset;
+                    u->size = gt->size;
+                    u->components = gt->components;
+                    offset += gt->size;
+                    /* The declaration moves into the block emitted below; the
+                       body keeps referring to the bare name. */
+                    consumed = true;
+                }
+            }
+        }
+
+        if (!consumed) {
+            if (strstr(line, "gl_FragColor")) uses_frag_color = true;
+            buf_add(&body, line, line_len);
+            buf_add(&body, "\n", 1);
+        }
+
+        /* Track brace depth so declarations inside functions are left alone. */
+        for (size_t i = 0; i < line_len; i++) {
+            if (line[i] == '{') depth++;
+            else if (line[i] == '}') depth--;
+        }
+
+        if (!eol) break;
+        p = eol + 1;
+    }
+    (void)line_start;
+
+    if (body.failed) goto fail;
+
+    t.uniform_size = t.uniform_count ? align_up(offset, 16) : 0;
+
+    /* Assemble: version, the uniform block, the aliases that redirect the
+       shader's own references, then its untouched body. */
+    Buf outbuf = { 0 };
+    buf_puts(&outbuf, "#version 450\n");
+
+    if (t.uniform_count) {
+        buf_puts(&outbuf, "layout(set = 3, binding = 0, std140) uniform _RmmzUniforms {\n");
+        for (int i = 0; i < t.uniform_count; i++) {
+            const char *type = "float";
+            for (size_t k = 0; k < sizeof(TYPES) / sizeof(TYPES[0]); k++) {
+                if (TYPES[k].size == t.uniforms[i].size &&
+                    TYPES[k].components == t.uniforms[i].components) {
+                    type = TYPES[k].name;
+                    break;
+                }
+            }
+            buf_printf(&outbuf, "    %s %s;\n", type, t.uniforms[i].name);
+        }
+        buf_puts(&outbuf, "} _rmmz;\n");
+        /* Aliases come after the block so its own member names are not
+           rewritten by them. */
+        for (int i = 0; i < t.uniform_count; i++) {
+            buf_printf(&outbuf, "#define %s _rmmz.%s\n",
+                       t.uniforms[i].name, t.uniforms[i].name);
+        }
+    }
+
+    if (uses_frag_color) {
+        buf_puts(&outbuf, "layout(location = 0) out vec4 _rmmzFragColor;\n");
+        buf_puts(&outbuf, "#define gl_FragColor _rmmzFragColor\n");
+    }
+    buf_puts(&outbuf, "#define texture2D texture\n");
+    buf_puts(&outbuf, "#define textureCube texture\n");
+    buf_puts(&outbuf, "#define texture2DProj textureProj\n");
+
+    buf_puts(&outbuf, body.data ? body.data : "");
+
+    if (outbuf.failed) {
+        free(outbuf.data);
+        goto fail;
+    }
+
+    free(body.data);
+    free(src);
+
+    t.source = outbuf.data;
+    *out = t;
+    return true;
+
+fail:
+    free(body.data);
+    free(src);
+    return false;
+}
+
+void glsl_translation_free(GlslTranslation *t)
+{
+    if (!t) return;
+    free(t->source);
+    t->source = NULL;
+}
+
+const GlslUniform *glsl_translation_find(const GlslTranslation *t, const char *name)
+{
+    if (!t || !name) return NULL;
+    for (int i = 0; i < t->uniform_count; i++) {
+        if (strcmp(t->uniforms[i].name, name) == 0) return &t->uniforms[i];
+    }
+    return NULL;
+}
+
+int glsl_translation_sampler_index(const GlslTranslation *t, const char *name)
+{
+    if (!t || !name) return -1;
+    for (int i = 0; i < t->sampler_count; i++) {
+        if (strcmp(t->samplers[i], name) == 0) return i;
+    }
+    return -1;
+}

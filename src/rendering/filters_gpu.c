@@ -11,13 +11,16 @@
  * onto offsets in its constant buffer, and filter_set_uniform_* writes into a
  * staging block that filter_draw_quad records alongside the draw.
  *
- * Shaders the game supplies at run time (PIXI.Filter with its own GLSL) cannot
- * be compiled here -- SDL3 takes bytecode, not source -- so
- * filter_compile_shader returns 0 for them and the shim falls back to its
- * passthrough copy, as it already does when GL fails to compile a shader. */
+ * Shaders the game supplies at run time (PIXI.Filter with its own GLSL) are
+ * rewritten by glsl_translate and compiled by gpu_shader_runtime. Their
+ * uniform offsets come from that rewrite rather than a table here. When the
+ * build has no runtime compiler, or the source defeats the rewrite,
+ * filter_compile_shader returns 0 and the shim falls back to its passthrough
+ * copy, as it already does when GL fails to compile a shader. */
 
 #include "rendering/filters.h"
 #include "rendering/gpu_backend.h"
+#include "rendering/glsl_translate.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -82,12 +85,19 @@ static const ShaderInfo SHADER_INFO[GPU_SHADER_COUNT] = {
 
 static int s_initialized = 0;
 
+/* Largest uniform block a plugin filter may declare. Generous next to the
+   built-ins, which need 80 bytes at most. */
+#define RUNTIME_UNIFORM_BYTES 512
+
 /* State between filter_begin() and filter_end(). */
 static struct {
     int      shader;
-    uint32_t texture;
-    uint32_t mask_texture;
-    uint8_t  uniforms[GPU_MAX_UNIFORM_BYTES];
+    uint32_t textures[GPU_MAX_FILTER_TEXTURES];
+    int      texture_count;
+    uint8_t  uniforms[RUNTIME_UNIFORM_BYTES];
+    /* Set for a shader the game supplied, whose uniform offsets come from the
+       rewrite rather than a table here. */
+    const GlslTranslation *layout;
 } s_current;
 
 void filters_init(void)
@@ -112,23 +122,27 @@ uint32_t filter_compile_shader(const char *vert_src, const char *frag_src)
     if (frag_src == COLOR_FILTER_FRAG_SRC) return GPU_SHADER_COLOR_FILTER;
     if (frag_src == MASK_FRAG_SRC)         return GPU_SHADER_MASK;
 
-    /* Game-supplied GLSL: unsupported, so the caller draws unfiltered. */
-    return 0;
+    /* Anything else is the game's own GLSL. Translating and compiling it is
+       the runtime shader path; a failure there returns 0 and the caller falls
+       back to drawing unfiltered, as it does when GL rejects a shader. */
+    return gpu_runtime_shader_create(frag_src);
 }
 
 void filter_delete_shader(uint32_t program)
 {
-    /* Built-in pipelines live for the lifetime of the device. */
-    (void)program;
+    /* Built-in pipelines live for the lifetime of the device; a shader
+       compiled from a game's source is owned by whoever asked for it. */
+    if (program >= GPU_SHADER_COUNT) gpu_runtime_shader_destroy(program);
 }
 
 void filter_begin(uint32_t program, uint32_t input_texture, int width, int height)
 {
     (void)width; (void)height;
+    memset(&s_current, 0, sizeof(s_current));
     s_current.shader = (int)program;
-    s_current.texture = input_texture;
-    s_current.mask_texture = 0;
-    memset(s_current.uniforms, 0, sizeof(s_current.uniforms));
+    s_current.textures[0] = input_texture;
+    s_current.texture_count = 1;
+    s_current.layout = (const GlslTranslation *)gpu_runtime_shader_layout(program);
 }
 
 static const UniformSlot *find_slot(int shader, const char *name)
@@ -144,19 +158,41 @@ static const UniformSlot *find_slot(int shader, const char *name)
 
 static void write_uniform(const char *name, const float *values, size_t count)
 {
-    const UniformSlot *slot = find_slot(s_current.shader, name);
-    if (!slot) return;
-    if (slot->offset + count * sizeof(float) > sizeof(s_current.uniforms)) return;
-    memcpy(s_current.uniforms + slot->offset, values, count * sizeof(float));
+    uint32_t offset;
+    if (s_current.layout) {
+        const GlslUniform *u = glsl_translation_find(s_current.layout, name);
+        if (!u) return;
+        /* A shader declaring vec4 but handed a single float (or the reverse)
+           would scribble past the member; keep to whichever is smaller. */
+        size_t max_floats = u->size / sizeof(float);
+        if (count > max_floats) count = max_floats;
+        offset = u->offset;
+    } else {
+        const UniformSlot *slot = find_slot(s_current.shader, name);
+        if (!slot) return;
+        offset = slot->offset;
+    }
+    if (offset + count * sizeof(float) > sizeof(s_current.uniforms)) return;
+    memcpy(s_current.uniforms + offset, values, count * sizeof(float));
 }
 
 void filter_set_uniform_texture(uint32_t program, const char *name,
                                 uint32_t texture, int unit)
 {
     (void)program; (void)unit;
-    /* The mask shader is the only one with a second sampler. */
-    if (name && strcmp(name, "u_mask") == 0)
-        s_current.mask_texture = texture;
+    if (!name) return;
+
+    int index = -1;
+    if (s_current.layout) {
+        index = glsl_translation_sampler_index(s_current.layout, name);
+    } else if (strcmp(name, "u_mask") == 0) {
+        /* The mask shader is the only built-in with a second sampler. */
+        index = 1;
+    }
+    if (index <= 0 || index >= GPU_MAX_FILTER_TEXTURES) return;
+
+    s_current.textures[index] = texture;
+    if (index + 1 > s_current.texture_count) s_current.texture_count = index + 1;
 }
 
 void filter_set_uniform_1f(uint32_t program, const char *name, float value)
@@ -189,17 +225,25 @@ void filter_set_uniform_mat4(uint32_t program, const char *name, const float *va
 
 void filter_draw_quad(void)
 {
-    if (s_current.shader <= 0 || s_current.shader >= GPU_SHADER_COUNT) return;
-    uint32_t size = SHADER_INFO[s_current.shader].size;
-    gpu_record_filter(s_current.shader, s_current.texture, s_current.mask_texture,
+    if (s_current.shader <= 0) return;
+
+    uint32_t size;
+    if (s_current.layout) {
+        size = s_current.layout->uniform_size;
+        if (size > sizeof(s_current.uniforms)) return;
+    } else if (s_current.shader < GPU_SHADER_COUNT) {
+        size = SHADER_INFO[s_current.shader].size;
+    } else {
+        return;
+    }
+
+    gpu_record_filter(s_current.shader, s_current.textures, s_current.texture_count,
                       size ? s_current.uniforms : NULL, size);
 }
 
 void filter_end(void)
 {
-    s_current.shader = 0;
-    s_current.texture = 0;
-    s_current.mask_texture = 0;
+    memset(&s_current, 0, sizeof(s_current));
 }
 
 const char *filter_default_vert_src(void)      { return DEFAULT_VERT_SRC; }

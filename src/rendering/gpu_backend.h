@@ -32,6 +32,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+struct GlslTranslation;
+
 /* Vertex layout shared with the sprite batch: matches the GL backend. */
 typedef struct {
     float x, y;
@@ -55,6 +57,10 @@ enum {
 
 /* Largest fragment uniform block of any built-in shader (colour matrix). */
 #define GPU_MAX_UNIFORM_BYTES 80
+
+/* Sampler slots a filter pass may bind. Built-ins need at most two (the
+   mask shader); plugin filters occasionally sample a second texture. */
+#define GPU_MAX_FILTER_TEXTURES 4
 
 /* Device lifecycle */
 
@@ -100,9 +106,23 @@ void gpu_record_sprites(const GpuVertex *verts, int quad_count, uint32_t texture
                         int blend_mode, const float projection[16],
                         float premultiplied);
 
-/* Record a fullscreen filter pass. `uniforms` may be NULL. */
-void gpu_record_filter(int shader, uint32_t texture, uint32_t mask_texture,
+/* Record a fullscreen filter pass. Textures are bound to successive sampler
+   slots in the order given; `uniforms` may be NULL. */
+void gpu_record_filter(int shader, const uint32_t *textures, int texture_count,
                        const void *uniforms, uint32_t uniform_size);
+
+/* Shaders a game's plugins supply at run time.
+ *
+ * `source` is the plugin's own GLSL ES; it is translated, compiled and
+ * registered, and the returned id can be used as a shader anywhere above.
+ * Returns 0 when the source cannot be compiled, which leaves the caller to
+ * draw unfiltered. Ids start past the built-ins so the two never collide. */
+uint32_t gpu_runtime_shader_create(const char *source);
+void     gpu_runtime_shader_destroy(uint32_t id);
+
+/* Where each uniform the plugin declared ended up, so they can still be set
+   by name. NULL for a built-in or unknown id. */
+const struct GlslTranslation *gpu_runtime_shader_layout(uint32_t id);
 
 /* Upload the arenas, replay everything recorded so far and submit. Called at
    end of frame, and before any readback that must see prior draws. */
