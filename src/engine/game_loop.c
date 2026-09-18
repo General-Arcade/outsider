@@ -605,8 +605,20 @@ bool game_loop_step(GameLoop *loop)
         loop->running = false;
     }
 
-    /* --- Phase 5: Swap buffers --- */
+    /* --- Phase 5: Present --- */
     phase_start = phase_end;
+
+    {
+        /* The frame was drawn into an offscreen surface; putting it on screen
+           is the renderer's job, and the window swap follows it. */
+        Renderer *r = loop->screenshot_renderer_slot ? *loop->screenshot_renderer_slot : NULL;
+        if (r) {
+            int ww = 0, wh = 0;
+            platform_get_window_size(loop->platform, &ww, &wh);
+            renderer_set_output_size(r, ww, wh);
+            renderer_present(r);
+        }
+    }
 
     platform_swap_buffers(loop->platform);
 

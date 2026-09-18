@@ -40,6 +40,19 @@ void renderer_begin_frame_transparent(Renderer *r);
 /* End the current frame. Flushes the sprite batch. */
 void renderer_end_frame(Renderer *r);
 
+/* Composite the finished frame onto the window and make it visible.
+ *
+ * Frames are drawn into an offscreen surface rather than straight to the
+ * window: no graphics API guarantees that the image being presented can be
+ * read back, and screenshots and the visual-regression harness both need to
+ * read it. Call once per frame, after renderer_end_frame. */
+void renderer_present(Renderer *r);
+
+/* Size of the window's drawable, which the offscreen surface matches. Call on
+ * startup and whenever the window resizes; the game's own resolution, set by
+ * renderer_resize, is a separate thing. */
+void renderer_set_output_size(Renderer *r, int width, int height);
+
 /* Get the sprite batch for direct draw calls. */
 SpriteBatch *renderer_get_batch(Renderer *r);
 

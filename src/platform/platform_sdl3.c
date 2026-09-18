@@ -658,11 +658,9 @@ bool platform_poll_events(Platform *p)
 void platform_swap_buffers(Platform *p)
 {
     if (!p || !p->window) return;
-#ifdef RMMZ_RENDER_GPU
-    /* The frame was composed into an offscreen texture; present blits it to
-       the swapchain. */
-    gpu_frame_present();
-#else
+#ifndef RMMZ_RENDER_GPU
+    /* The GPU backend has already put the frame on screen in
+       renderer_present; only GL needs the window's buffers swapped. */
     SDL_GL_SwapWindow(p->window);
 #endif
 }

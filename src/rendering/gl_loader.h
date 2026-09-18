@@ -46,6 +46,7 @@
     X(PFNGLDELETEVERTEXARRAYSPROC,         glDeleteVertexArrays) \
     X(PFNGLBINDFRAMEBUFFERPROC,            glBindFramebuffer) \
     X(PFNGLDELETEFRAMEBUFFERSPROC,         glDeleteFramebuffers) \
+    X(PFNGLBLITFRAMEBUFFERPROC,            glBlitFramebuffer) \
     /* Direct state access (GL 4.5) */ \
     X(PFNGLCREATEBUFFERSPROC,              glCreateBuffers) \
     X(PFNGLNAMEDBUFFERSTORAGEPROC,         glNamedBufferStorage) \
@@ -98,6 +99,7 @@ RMMZ_GL_FUNCS(RMMZ_GL_DECLARE)
 #define glDeleteVertexArrays           rmmz_glDeleteVertexArrays
 #define glBindFramebuffer              rmmz_glBindFramebuffer
 #define glDeleteFramebuffers           rmmz_glDeleteFramebuffers
+#define glBlitFramebuffer              rmmz_glBlitFramebuffer
 #define glCreateBuffers                rmmz_glCreateBuffers
 #define glNamedBufferStorage           rmmz_glNamedBufferStorage
 #define glNamedBufferData              rmmz_glNamedBufferData

@@ -135,6 +135,19 @@ void renderer_end_frame(Renderer *r)
     sprite_batch_end(r->batch);
 }
 
+void renderer_present(Renderer *r)
+{
+    (void)r;
+    gpu_frame_present();
+}
+
+void renderer_set_output_size(Renderer *r, int width, int height)
+{
+    (void)r;
+    /* The backend sizes its screen texture from the window itself. */
+    gpu_frame_resize(width, height);
+}
+
 SpriteBatch *renderer_get_batch(Renderer *r)
 {
     return r ? r->batch : NULL;

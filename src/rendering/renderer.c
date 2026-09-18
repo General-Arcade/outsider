@@ -26,6 +26,14 @@ struct Renderer {
     int          vp_w;        /* screen viewport width in pixels */
     int          vp_h;        /* screen viewport height in pixels */
     uint32_t     bound_fbo;   /* currently bound FBO, 0 = default */
+
+    /* The frame is composed here and blitted to the window on present, so a
+       screenshot reads the same pixels on every backend and rendering does
+       not depend on the window being visible. */
+    uint32_t     screen_fbo;
+    uint32_t     screen_tex;
+    int          out_w;
+    int          out_h;
 };
 
 Renderer *renderer_create(int width, int height)
@@ -64,8 +72,36 @@ Renderer *renderer_create(int width, int height)
 void renderer_destroy(Renderer *r)
 {
     if (!r) return;
+#ifdef RMMZ_HAS_GL
+    if (r->screen_fbo) renderer_delete_fbo(r->screen_fbo, r->screen_tex);
+#endif
     sprite_batch_destroy(r->batch);
     free(r);
+}
+
+#ifdef RMMZ_HAS_GL
+static void ensure_screen_fbo(Renderer *r)
+{
+    if (r->out_w <= 0 || r->out_h <= 0) return;
+    if (r->screen_fbo) return;
+    r->screen_fbo = renderer_create_fbo(r->out_w, r->out_h, &r->screen_tex);
+}
+#endif
+
+void renderer_set_output_size(Renderer *r, int width, int height)
+{
+    if (!r || width <= 0 || height <= 0) return;
+    if (r->out_w == width && r->out_h == height) return;
+    r->out_w = width;
+    r->out_h = height;
+#ifdef RMMZ_HAS_GL
+    if (r->screen_fbo) {
+        renderer_delete_fbo(r->screen_fbo, r->screen_tex);
+        r->screen_fbo = 0;
+        r->screen_tex = 0;
+    }
+    ensure_screen_fbo(r);
+#endif
 }
 
 void renderer_resize(Renderer *r, int width, int height)
@@ -130,6 +166,8 @@ void renderer_begin_frame(Renderer *r)
 #ifdef RMMZ_HAS_GL
     /* When an FBO is bound, renderer_bind_fbo already set its viewport. */
     if (r->bound_fbo == 0) {
+        ensure_screen_fbo(r);
+        glBindFramebuffer(GL_FRAMEBUFFER, r->screen_fbo);
         glViewport(r->vp_x, r->vp_y, r->vp_w, r->vp_h);
     }
     clear_unscissored();
@@ -144,6 +182,8 @@ void renderer_begin_frame_transparent(Renderer *r)
 
 #ifdef RMMZ_HAS_GL
     if (r->bound_fbo == 0) {
+        ensure_screen_fbo(r);
+        glBindFramebuffer(GL_FRAMEBUFFER, r->screen_fbo);
         glViewport(r->vp_x, r->vp_y, r->vp_w, r->vp_h);
     }
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
@@ -159,6 +199,23 @@ void renderer_end_frame(Renderer *r)
     if (!r) return;
     sprite_batch_end(r->batch);
 
+}
+
+void renderer_present(Renderer *r)
+{
+    if (!r) return;
+#ifdef RMMZ_HAS_GL
+    if (!r->screen_fbo || r->out_w <= 0 || r->out_h <= 0) return;
+    /* A plain blit: the offscreen surface is already the window's size, so
+       there is no scaling and the letterboxing baked into it is preserved. */
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->screen_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glDisable(GL_SCISSOR_TEST);
+    glBlitFramebuffer(0, 0, r->out_w, r->out_h,
+                      0, 0, r->out_w, r->out_h,
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+#endif
 }
 
 SpriteBatch *renderer_get_batch(Renderer *r)
@@ -302,7 +359,7 @@ void renderer_unbind_fbo(Renderer *r)
     r->bound_fbo = 0;
 
 #ifdef RMMZ_HAS_GL
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->screen_fbo);
     glViewport(r->vp_x, r->vp_y, r->vp_w, r->vp_h);
 #endif
 
@@ -324,7 +381,10 @@ uint8_t *renderer_read_pixels(Renderer *r, uint32_t fbo, int width, int height)
     /* Flush pending draws before reading. */
     sprite_batch_flush(r->batch);
 
-    /* Bind the target FBO (0 = default framebuffer). */
+    /* 0 means "the screen", which is the offscreen surface the frame was
+       composed into rather than the window itself. */
+    if (fbo == 0 && r->screen_fbo) fbo = r->screen_fbo;
+
     GLint prev_fbo = 0;
     glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
     if ((uint32_t)prev_fbo != fbo) {
