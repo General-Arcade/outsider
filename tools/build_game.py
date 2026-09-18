@@ -125,8 +125,8 @@ def step_package(build_dir: Path, dist_dir: Path, build_type: str) -> bool:
         os.chmod(dst_exe, 0o755)
     print(f"  Copied executable: {exe_name}")
 
-    # Copy SDL2 shared library if present
-    for lib_pattern in ["libSDL2*", "SDL2.dll"]:
+    # Copy SDL3 shared library if present
+    for lib_pattern in ["libSDL3*", "SDL3.dll"]:
         for lib_file in build_dir.rglob(lib_pattern):
             if lib_file.is_file() and lib_file.suffix in (".dll", ".so", ".dylib"):
                 shutil.copy2(lib_file, dist_dir / lib_file.name)

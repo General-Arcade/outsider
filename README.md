@@ -2,7 +2,7 @@
 
 Outsider is a native, browser-free runtime for RPG Maker MZ games. The game's original
 JavaScript runs unmodified inside [QuickJS](https://github.com/quickjs-ng/quickjs),
-with windowing and input from SDL2, rendering through OpenGL, and audio through
+with windowing and input from SDL3, rendering through OpenGL, and audio through
 SoLoud. No NW.js, no Chromium, no Node.
 
 The result is a small executable (a few megabytes instead of a couple hundred)
@@ -88,7 +88,7 @@ Browser API shims (src/shims/*.js)
         |
 QuickJS C bindings (src/bindings/)
         |
-Native backends: SDL2 + OpenGL, SoLoud, Effekseer
+Native backends: SDL3 + OpenGL, SoLoud, Effekseer
 ```
 
 The runtime behaves like a purpose-built browser. Scripts are loaded in the
@@ -106,7 +106,7 @@ under a `__native_*` name.
 - `ffmpeg` on `PATH` (or in `RMMZ_FFMPEG`), only if the game ships M4A
   audio or movies
 
-SDL2, QuickJS-NG and SoLoud are fetched and built from source by CMake.
+SDL3, QuickJS-NG and SoLoud are fetched and built from source by CMake.
 stb_image and stb_truetype are vendored under `third_party/stb`.
 
 ## Building
@@ -292,7 +292,7 @@ third_party/              Dependency fetching (CMake FetchContent) + vendored st
 
 | Library | Purpose |
 |---------|---------|
-| SDL2 2.30 | Window, OpenGL context, input, audio device |
+| SDL3 3.4 | Window, OpenGL context, input, audio device |
 | QuickJS-NG 0.9 | JavaScript engine |
 | SoLoud | Audio mixing, OGG/WAV decoding |
 | Effekseer 1.70e | Particle effects (optional) |

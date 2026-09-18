@@ -9,7 +9,7 @@
 #include "rendering/renderer.h"
 #include "video/video_player.h"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <quickjs.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +58,7 @@ struct GameLoop {
     bool         control_started;      /* first command received */
     bool         control_eof;
     SDL_Thread  *control_thread;
-    SDL_mutex   *control_mutex;
+    SDL_Mutex   *control_mutex;
     ControlLine *control_head;
     ControlLine *control_tail;
     long         control_shot_id;

@@ -17,7 +17,7 @@
 #include "bindings/bind_io.h"
 
 #include <quickjs.h>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include "test_paths.h"
 #include <stdio.h>
 #include <stdlib.h>

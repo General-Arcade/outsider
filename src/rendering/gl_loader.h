@@ -13,7 +13,7 @@
  * gl_loader_init() must be called once after SDL_GL_CreateContext().
  */
 
-#include <SDL_opengl.h>
+#include <SDL3/SDL_opengl.h>
 
 /* X-macro list of every post-GL-1.1 function used by the runtime. */
 #define RMMZ_GL_FUNCS(X) \

@@ -40,7 +40,7 @@ LogLevel error_handler_get_level(void);
    When set, log output goes to the callback in addition to file/console. */
 void error_handler_set_callback(LogCallback cb, void *userdata);
 
-/* Log the message at ERROR level and show an SDL2 message box (if SDL is up). */
+/* Log the message at ERROR level and show an SDL message box (if SDL is up). */
 void error_handler_show_error_dialog(const char *title, const char *message);
 
 /* Log the pending JS exception (message + stack), dispatch it to window.onerror,

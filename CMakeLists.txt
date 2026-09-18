@@ -51,7 +51,7 @@ find_package(OpenGL REQUIRED)
 # Main runtime sources
 add_executable(outsider
     src/main.c
-    src/platform/platform_sdl2.c
+    src/platform/platform_sdl3.c
     src/platform/win_console.c
     src/rendering/gl_loader.c
     src/engine/js_engine.c
@@ -91,7 +91,7 @@ add_executable(outsider
 # is declared per-monitor DPI aware.
 if(WIN32)
     target_sources(outsider PRIVATE src/platform/outsider.manifest)
-    # GUI subsystem: no console window on launch. SDL2main supplies WinMain.
+    # GUI subsystem: no console window on launch. SDL3 supplies WinMain.
     # Output still reaches an attached parent console or console.log
     # (see src/platform/win_console.c). RMMZ_WIN32_CONSOLE=ON restores the
     # classic console build for debugging.
@@ -114,8 +114,7 @@ target_compile_definitions(outsider PRIVATE
 )
 
 target_link_libraries(outsider PRIVATE
-    SDL2::SDL2
-    SDL2::SDL2main
+    SDL3::SDL3
     OpenGL::GL
     qjs
     soloud

@@ -5,7 +5,7 @@
 
 #include "rendering/gl_loader.h"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <stdio.h>
 
 #define RMMZ_GL_DEFINE(type, name) type rmmz_##name = NULL;

@@ -1,6 +1,6 @@
 add_executable(test_platform
     test_platform.c
-    ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl2.c
+    ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl3.c
     ${CMAKE_SOURCE_DIR}/src/rendering/gl_loader.c
     ${CMAKE_SOURCE_DIR}/src/input/input_manager.c
 )
@@ -10,8 +10,7 @@ target_include_directories(test_platform PRIVATE
 )
 
 target_link_libraries(test_platform PRIVATE
-    SDL2::SDL2
-    SDL2::SDL2main
+    SDL3::SDL3
     OpenGL::GL
 )
 
@@ -288,7 +287,7 @@ target_include_directories(test_audio PRIVATE
 target_link_libraries(test_audio PRIVATE
     qjs
     soloud
-    SDL2::SDL2
+    SDL3::SDL3
     ${RMMZ_SYS_LIBS}
 )
 
@@ -312,7 +311,7 @@ target_include_directories(test_webaudio PRIVATE
 target_link_libraries(test_webaudio PRIVATE
     qjs
     soloud
-    SDL2::SDL2
+    SDL3::SDL3
     ${RMMZ_SYS_LIBS}
 )
 
@@ -393,7 +392,7 @@ target_include_directories(test_gameplay PRIVATE
 target_link_libraries(test_gameplay PRIVATE
     qjs
     soloud
-    SDL2::SDL2
+    SDL3::SDL3
     ${RMMZ_SYS_LIBS}
 )
 
@@ -421,7 +420,7 @@ target_include_directories(test_filters PRIVATE
 target_link_libraries(test_filters PRIVATE
     qjs
     ${RMMZ_SYS_LIBS}
-    SDL2::SDL2
+    SDL3::SDL3
 )
 
 # Run from project root for shim file paths
@@ -468,10 +467,10 @@ target_link_libraries(test_plugins PRIVATE
 # Run from project root for shim file paths and game plugin access
 add_test(NAME plugins COMMAND test_plugins WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-# Display tests (fullscreen, resize, scaling — needs SDL2 + OpenGL + QuickJS + platform bindings)
+# Display tests (fullscreen, resize, scaling — needs SDL3 + OpenGL + QuickJS + platform bindings)
 add_executable(test_display
     test_display.c
-    ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl2.c
+    ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl3.c
     ${CMAKE_SOURCE_DIR}/src/rendering/gl_loader.c
     ${CMAKE_SOURCE_DIR}/src/input/input_manager.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_platform.c
@@ -485,8 +484,7 @@ target_include_directories(test_display PRIVATE
 )
 
 target_link_libraries(test_display PRIVATE
-    SDL2::SDL2
-    SDL2::SDL2main
+    SDL3::SDL3
     OpenGL::GL
     qjs
 )
@@ -509,7 +507,7 @@ target_include_directories(test_error_handler PRIVATE
 
 target_link_libraries(test_error_handler PRIVATE
     qjs
-    SDL2::SDL2
+    SDL3::SDL3
 )
 
 # Run from project root for shim file paths
@@ -524,7 +522,7 @@ add_executable(test_performance
     ${CMAKE_SOURCE_DIR}/src/engine/js_engine.c
     ${CMAKE_SOURCE_DIR}/src/engine/game_loop.c
     ${CMAKE_SOURCE_DIR}/src/engine/error_handler.c
-    ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl2.c
+    ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl3.c
     ${CMAKE_SOURCE_DIR}/src/rendering/gl_loader.c
     ${CMAKE_SOURCE_DIR}/src/input/input_manager.c
     ${CMAKE_SOURCE_DIR}/src/io/file_io.c
@@ -540,8 +538,7 @@ target_include_directories(test_performance PRIVATE
 target_link_libraries(test_performance PRIVATE
     qjs
     soloud
-    SDL2::SDL2
-    SDL2::SDL2main
+    SDL3::SDL3
     OpenGL::GL
     ${RMMZ_SYS_LIBS}
 )
@@ -585,7 +582,7 @@ target_include_directories(test_acceptance PRIVATE
 target_link_libraries(test_acceptance PRIVATE
     qjs
     soloud
-    SDL2::SDL2
+    SDL3::SDL3
     ${RMMZ_SYS_LIBS}
 )
 
@@ -612,8 +609,7 @@ target_include_directories(test_video PRIVATE
 
 target_link_libraries(test_video PRIVATE
     soloud
-    SDL2::SDL2
-    SDL2::SDL2main
+    SDL3::SDL3
     OpenGL::GL
     ${RMMZ_SYS_LIBS}
 )

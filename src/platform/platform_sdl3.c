@@ -6,7 +6,7 @@
 #include "platform/platform.h"
 #include "input/input_manager.h"
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include "rendering/gl_loader.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,10 +16,10 @@ struct Platform {
     SDL_Window   *window;
     SDL_GLContext  gl_ctx;
 
-    SDL_GameController *controllers[INPUT_MAX_GAMEPADS];
-    SDL_JoystickID      controller_ids[INPUT_MAX_GAMEPADS];
+    SDL_Gamepad    *gamepads[INPUT_MAX_GAMEPADS];
+    SDL_JoystickID  gamepad_ids[INPUT_MAX_GAMEPADS];
 
-    /* Set when SDL_WINDOWEVENT_RESIZED fires; consumed by platform_check_resize. */
+    /* Set when SDL_EVENT_WINDOW_RESIZED fires; consumed by platform_check_resize. */
     bool  resize_pending;
     int   resize_w;
     int   resize_h;
@@ -29,9 +29,9 @@ struct Platform {
 
 static int sdl_to_dom_keycode(SDL_Keycode key)
 {
-    /* Letters (DOM uses the uppercase ASCII code). */
-    if (key >= SDLK_a && key <= SDLK_z)
-        return (key - SDLK_a) + 65;
+    /* Letters (DOM uses the uppercase ASCII code; SDL3 keycodes are lowercase). */
+    if (key >= SDLK_A && key <= SDLK_Z)
+        return (key - SDLK_A) + 65;
 
     if (key >= SDLK_0 && key <= SDLK_9)
         return key;
@@ -85,24 +85,24 @@ static int sdl_to_dom_keycode(SDL_Keycode key)
         case SDLK_MINUS:        return 189;
         case SDLK_PERIOD:       return 190;
         case SDLK_SLASH:        return 191;
-        case SDLK_BACKQUOTE:    return 192;
+        case SDLK_GRAVE:        return 192;
         case SDLK_LEFTBRACKET:  return 219;
         case SDLK_BACKSLASH:    return 220;
         case SDLK_RIGHTBRACKET: return 221;
-        case SDLK_QUOTE:        return 222;
+        case SDLK_APOSTROPHE:   return 222;
         default:                return 0;
     }
 }
 
 /* SDL keycode -> DOM "key" string */
 
-static const char *sdl_to_dom_key(SDL_Keycode key, uint16_t mod)
+static const char *sdl_to_dom_key(SDL_Keycode key, SDL_Keymod mod)
 {
     static char buf[8];
 
-    if (key >= SDLK_a && key <= SDLK_z) {
-        buf[0] = (mod & KMOD_SHIFT) ? (char)('A' + (key - SDLK_a))
-                                     : (char)('a' + (key - SDLK_a));
+    if (key >= SDLK_A && key <= SDLK_Z) {
+        buf[0] = (mod & SDL_KMOD_SHIFT) ? (char)('A' + (key - SDLK_A))
+                                        : (char)('a' + (key - SDLK_A));
         buf[1] = '\0';
         return buf;
     }
@@ -258,17 +258,17 @@ static void process_key_event(const SDL_KeyboardEvent *kev, InputEventType type)
     memset(&ev, 0, sizeof(ev));
 
     ev.type = type;
-    ev.keyCode = sdl_to_dom_keycode(kev->keysym.sym);
-    ev.repeat = (kev->repeat != 0);
-    ev.shiftKey = (kev->keysym.mod & KMOD_SHIFT) != 0;
-    ev.ctrlKey  = (kev->keysym.mod & KMOD_CTRL)  != 0;
-    ev.altKey   = (kev->keysym.mod & KMOD_ALT)   != 0;
-    ev.metaKey  = (kev->keysym.mod & KMOD_GUI)   != 0;
+    ev.keyCode = sdl_to_dom_keycode(kev->key);
+    ev.repeat = kev->repeat;
+    ev.shiftKey = (kev->mod & SDL_KMOD_SHIFT) != 0;
+    ev.ctrlKey  = (kev->mod & SDL_KMOD_CTRL)  != 0;
+    ev.altKey   = (kev->mod & SDL_KMOD_ALT)   != 0;
+    ev.metaKey  = (kev->mod & SDL_KMOD_GUI)   != 0;
 
-    const char *key_str = sdl_to_dom_key(kev->keysym.sym, kev->keysym.mod);
+    const char *key_str = sdl_to_dom_key(kev->key, kev->mod);
     strncpy(ev.key, key_str, sizeof(ev.key) - 1);
 
-    const char *code_str = sdl_to_dom_code(kev->keysym.scancode);
+    const char *code_str = sdl_to_dom_code(kev->scancode);
     strncpy(ev.code, code_str, sizeof(ev.code) - 1);
 
     input_manager_push_event(&ev);
@@ -279,7 +279,7 @@ static void process_text_input(const SDL_TextInputEvent *tev)
     InputEvent ev;
     memset(&ev, 0, sizeof(ev));
     ev.type = INPUT_TEXT;
-    strncpy(ev.key, tev->text, sizeof(ev.key) - 1);
+    if (tev->text) strncpy(ev.key, tev->text, sizeof(ev.key) - 1);
     input_manager_push_event(&ev);
 }
 
@@ -289,8 +289,8 @@ static void process_mouse_button(const SDL_MouseButtonEvent *mev, InputEventType
     memset(&ev, 0, sizeof(ev));
 
     ev.type = type;
-    ev.mouseX = mev->x;
-    ev.mouseY = mev->y;
+    ev.mouseX = (int)mev->x;
+    ev.mouseY = (int)mev->y;
     ev.button = sdl_to_dom_button(mev->button);
 
     input_manager_push_event(&ev);
@@ -302,8 +302,8 @@ static void process_mouse_motion(const SDL_MouseMotionEvent *mev)
     memset(&ev, 0, sizeof(ev));
 
     ev.type = INPUT_MOUSE_MOVE;
-    ev.mouseX = mev->x;
-    ev.mouseY = mev->y;
+    ev.mouseX = (int)mev->x;
+    ev.mouseY = (int)mev->y;
 
     input_manager_push_event(&ev);
 }
@@ -317,33 +317,29 @@ static void process_mouse_wheel(const SDL_MouseWheelEvent *wev)
 
     double dx = (double)wev->x;
     double dy = (double)wev->y;
-#if SDL_VERSION_ATLEAST(2, 0, 18)
     if (wev->direction == SDL_MOUSEWHEEL_FLIPPED) {
         dx = -dx;
         dy = -dy;
     }
-#else
-    (void)wev;
-#endif
     /* DOM: positive deltaY = scroll down; SDL: positive y = scroll up. */
     ev.wheelDeltaX = dx;
     ev.wheelDeltaY = -dy;
 
     /* Wheel events carry no position; attach the current pointer. */
-    int mx, my;
+    float mx = 0.0f, my = 0.0f;
     SDL_GetMouseState(&mx, &my);
-    ev.mouseX = mx;
-    ev.mouseY = my;
+    ev.mouseX = (int)mx;
+    ev.mouseY = (int)my;
 
     input_manager_push_event(&ev);
 }
 
 /* Gamepads */
 
-static int find_controller_slot(Platform *p, SDL_JoystickID id)
+static int find_gamepad_slot(Platform *p, SDL_JoystickID id)
 {
     for (int i = 0; i < INPUT_MAX_GAMEPADS; i++) {
-        if (p->controllers[i] && p->controller_ids[i] == id)
+        if (p->gamepads[i] && p->gamepad_ids[i] == id)
             return i;
     }
     return -1;
@@ -352,38 +348,34 @@ static int find_controller_slot(Platform *p, SDL_JoystickID id)
 static int find_free_slot(Platform *p)
 {
     for (int i = 0; i < INPUT_MAX_GAMEPADS; i++) {
-        if (!p->controllers[i])
+        if (!p->gamepads[i])
             return i;
     }
     return -1;
 }
 
-static void open_controller(Platform *p, int device_index)
+static void open_gamepad(Platform *p, SDL_JoystickID id)
 {
-    if (!SDL_IsGameController(device_index)) return;
+    if (!SDL_IsGamepad(id)) return;
 
-    /* SDL also sends CONTROLLERDEVICEADDED for devices already open from the
-       init loop; skip those. */
-    SDL_JoystickID new_id = SDL_JoystickGetDeviceInstanceID(device_index);
-    if (new_id >= 0 && find_controller_slot(p, new_id) >= 0) return;
+    /* SDL also sends GAMEPAD_ADDED for devices already open from the init
+       loop; skip those. */
+    if (find_gamepad_slot(p, id) >= 0) return;
 
     int slot = find_free_slot(p);
     if (slot < 0) return;
 
-    SDL_GameController *gc = SDL_GameControllerOpen(device_index);
-    if (!gc) return;
+    SDL_Gamepad *gp = SDL_OpenGamepad(id);
+    if (!gp) return;
 
-    SDL_Joystick *joy = SDL_GameControllerGetJoystick(gc);
-    SDL_JoystickID id = SDL_JoystickInstanceID(joy);
-
-    p->controllers[slot] = gc;
-    p->controller_ids[slot] = id;
+    p->gamepads[slot] = gp;
+    p->gamepad_ids[slot] = id;
 
     GamepadState state;
     memset(&state, 0, sizeof(state));
     state.connected = true;
     state.index = slot;
-    const char *name = SDL_GameControllerName(gc);
+    const char *name = SDL_GetGamepadName(gp);
     if (name) {
         strncpy(state.id, name, sizeof(state.id) - 1);
     } else {
@@ -392,29 +384,29 @@ static void open_controller(Platform *p, int device_index)
     input_manager_set_gamepad(slot, &state);
 }
 
-static void close_controller(Platform *p, SDL_JoystickID id)
+static void close_gamepad(Platform *p, SDL_JoystickID id)
 {
-    int slot = find_controller_slot(p, id);
+    int slot = find_gamepad_slot(p, id);
     if (slot < 0) return;
 
-    SDL_GameControllerClose(p->controllers[slot]);
-    p->controllers[slot] = NULL;
-    p->controller_ids[slot] = 0;
+    SDL_CloseGamepad(p->gamepads[slot]);
+    p->gamepads[slot] = NULL;
+    p->gamepad_ids[slot] = 0;
     input_manager_clear_gamepad(slot);
 }
 
-/* Poll every open controller into the input manager. */
+/* Poll every open gamepad into the input manager. */
 static void update_gamepad_state(Platform *p)
 {
     for (int i = 0; i < INPUT_MAX_GAMEPADS; i++) {
-        SDL_GameController *gc = p->controllers[i];
-        if (!gc) continue;
+        SDL_Gamepad *gp = p->gamepads[i];
+        if (!gp) continue;
 
         GamepadState state;
         memset(&state, 0, sizeof(state));
         state.connected = true;
         state.index = i;
-        const char *name = SDL_GameControllerName(gc);
+        const char *name = SDL_GetGamepadName(gp);
         if (name) {
             strncpy(state.id, name, sizeof(state.id) - 1);
         } else {
@@ -422,37 +414,38 @@ static void update_gamepad_state(Platform *p)
         }
 
         /* W3C Standard Gamepad button order: A B X Y LB RB LT RT Back Start
-           LS RS DUp DDown DLeft DRight Guide. */
-        static const SDL_GameControllerButton btn_map[] = {
-            SDL_CONTROLLER_BUTTON_A,
-            SDL_CONTROLLER_BUTTON_B,
-            SDL_CONTROLLER_BUTTON_X,
-            SDL_CONTROLLER_BUTTON_Y,
-            SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
-            SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
-            SDL_CONTROLLER_BUTTON_INVALID,   /* LT: analog, filled in below */
-            SDL_CONTROLLER_BUTTON_INVALID,   /* RT: analog, filled in below */
-            SDL_CONTROLLER_BUTTON_BACK,
-            SDL_CONTROLLER_BUTTON_START,
-            SDL_CONTROLLER_BUTTON_LEFTSTICK,
-            SDL_CONTROLLER_BUTTON_RIGHTSTICK,
-            SDL_CONTROLLER_BUTTON_DPAD_UP,
-            SDL_CONTROLLER_BUTTON_DPAD_DOWN,
-            SDL_CONTROLLER_BUTTON_DPAD_LEFT,
-            SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
-            SDL_CONTROLLER_BUTTON_GUIDE,
+           LS RS DUp DDown DLeft DRight Guide. SDL3 names face buttons by
+           position, so A/B/X/Y are SOUTH/EAST/WEST/NORTH. */
+        static const SDL_GamepadButton btn_map[] = {
+            SDL_GAMEPAD_BUTTON_SOUTH,
+            SDL_GAMEPAD_BUTTON_EAST,
+            SDL_GAMEPAD_BUTTON_WEST,
+            SDL_GAMEPAD_BUTTON_NORTH,
+            SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,
+            SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,
+            SDL_GAMEPAD_BUTTON_INVALID,   /* LT: analog, filled in below */
+            SDL_GAMEPAD_BUTTON_INVALID,   /* RT: analog, filled in below */
+            SDL_GAMEPAD_BUTTON_BACK,
+            SDL_GAMEPAD_BUTTON_START,
+            SDL_GAMEPAD_BUTTON_LEFT_STICK,
+            SDL_GAMEPAD_BUTTON_RIGHT_STICK,
+            SDL_GAMEPAD_BUTTON_DPAD_UP,
+            SDL_GAMEPAD_BUTTON_DPAD_DOWN,
+            SDL_GAMEPAD_BUTTON_DPAD_LEFT,
+            SDL_GAMEPAD_BUTTON_DPAD_RIGHT,
+            SDL_GAMEPAD_BUTTON_GUIDE,
         };
 
         for (int b = 0; b < INPUT_GAMEPAD_BUTTONS; b++) {
-            if (btn_map[b] != SDL_CONTROLLER_BUTTON_INVALID) {
-                bool pressed = SDL_GameControllerGetButton(gc, btn_map[b]) != 0;
+            if (btn_map[b] != SDL_GAMEPAD_BUTTON_INVALID) {
+                bool pressed = SDL_GetGamepadButton(gp, btn_map[b]);
                 state.buttons[b].pressed = pressed;
                 state.buttons[b].value = pressed ? 1.0 : 0.0;
             }
         }
 
-        int16_t lt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-        int16_t rt = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+        int16_t lt = SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+        int16_t rt = SDL_GetGamepadAxis(gp, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
         double lt_val = (double)lt / 32767.0;
         double rt_val = (double)rt / 32767.0;
         state.buttons[6].value = lt_val;
@@ -461,15 +454,15 @@ static void update_gamepad_state(Platform *p)
         state.buttons[7].pressed = rt_val > 0.5;
 
         /* Axes LX, LY, RX, RY normalized to -1..1. */
-        static const SDL_GameControllerAxis axis_map[] = {
-            SDL_CONTROLLER_AXIS_LEFTX,
-            SDL_CONTROLLER_AXIS_LEFTY,
-            SDL_CONTROLLER_AXIS_RIGHTX,
-            SDL_CONTROLLER_AXIS_RIGHTY,
+        static const SDL_GamepadAxis axis_map[] = {
+            SDL_GAMEPAD_AXIS_LEFTX,
+            SDL_GAMEPAD_AXIS_LEFTY,
+            SDL_GAMEPAD_AXIS_RIGHTX,
+            SDL_GAMEPAD_AXIS_RIGHTY,
         };
 
         for (int a = 0; a < INPUT_GAMEPAD_AXES; a++) {
-            int16_t raw = SDL_GameControllerGetAxis(gc, axis_map[a]);
+            int16_t raw = SDL_GetGamepadAxis(gp, axis_map[a]);
             state.axes[a] = (double)raw / 32767.0;
         }
 
@@ -481,15 +474,15 @@ static void update_gamepad_state(Platform *p)
 
 Platform *platform_init(const char *title, int width, int height)
 {
-    /* Audio and gamecontroller are optional (absent in WSL / CI / headless). */
-    if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+    /* Audio and gamepad are optional (absent in WSL / CI / headless). */
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init(VIDEO) failed: %s\n", SDL_GetError());
         return NULL;
     }
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0)
+    if (!SDL_InitSubSystem(SDL_INIT_AUDIO))
         fprintf(stderr, "Warning: audio init failed: %s\n", SDL_GetError());
-    if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0)
-        fprintf(stderr, "Warning: gamecontroller init failed: %s\n", SDL_GetError());
+    if (!SDL_InitSubSystem(SDL_INIT_GAMEPAD))
+        fprintf(stderr, "Warning: gamepad init failed: %s\n", SDL_GetError());
 
 
     /* OpenGL 4.5 core: the renderer relies on direct state access. */
@@ -499,16 +492,15 @@ Platform *platform_init(const char *title, int width, int height)
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 
     SDL_Window *window = SDL_CreateWindow(
-        title,
-        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-        width, height,
-        SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
+        title, width, height,
+        SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
     );
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
         return NULL;
     }
+    SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 
     SDL_GLContext gl_ctx = SDL_GL_CreateContext(window);
     if (!gl_ctx) {
@@ -520,13 +512,13 @@ Platform *platform_init(const char *title, int width, int height)
 
     /* Typed text (layout- and IME-aware) for HTML input overlays; key
        events keep flowing regardless. */
-    SDL_StartTextInput();
+    SDL_StartTextInput(window);
 
     /* Windows' opengl32.dll exports only GL 1.1; newer entry points must be
        resolved from the driver at runtime. */
     if (gl_loader_init() != 0) {
         fprintf(stderr, "OpenGL 4.5 entry points unavailable (driver too old?)\n");
-        SDL_GL_DeleteContext(gl_ctx);
+        SDL_GL_DestroyContext(gl_ctx);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return NULL;
@@ -536,7 +528,7 @@ Platform *platform_init(const char *title, int width, int height)
 
     Platform *p = calloc(1, sizeof(Platform));
     if (!p) {
-        SDL_GL_DeleteContext(gl_ctx);
+        SDL_GL_DestroyContext(gl_ctx);
         SDL_DestroyWindow(window);
         SDL_Quit();
         return NULL;
@@ -544,9 +536,12 @@ Platform *platform_init(const char *title, int width, int height)
     p->window = window;
     p->gl_ctx = gl_ctx;
 
-    int num_joysticks = SDL_NumJoysticks();
-    for (int i = 0; i < num_joysticks; i++) {
-        open_controller(p, i);
+    int num_gamepads = 0;
+    SDL_JoystickID *ids = SDL_GetGamepads(&num_gamepads);
+    if (ids) {
+        for (int i = 0; i < num_gamepads; i++)
+            open_gamepad(p, ids[i]);
+        SDL_free(ids);
     }
 
     return p;
@@ -557,13 +552,13 @@ void platform_shutdown(Platform *p)
     if (!p) return;
 
     for (int i = 0; i < INPUT_MAX_GAMEPADS; i++) {
-        if (p->controllers[i]) {
-            SDL_GameControllerClose(p->controllers[i]);
-            p->controllers[i] = NULL;
+        if (p->gamepads[i]) {
+            SDL_CloseGamepad(p->gamepads[i]);
+            p->gamepads[i] = NULL;
         }
     }
 
-    if (p->gl_ctx) SDL_GL_DeleteContext(p->gl_ctx);
+    if (p->gl_ctx) SDL_GL_DestroyContext(p->gl_ctx);
     if (p->window) SDL_DestroyWindow(p->window);
     SDL_Quit();
     free(p);
@@ -574,52 +569,50 @@ bool platform_poll_events(Platform *p)
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
-            case SDL_QUIT:
+            case SDL_EVENT_QUIT:
                 return false;
 
-            case SDL_KEYDOWN:
+            case SDL_EVENT_KEY_DOWN:
                 process_key_event(&ev.key, INPUT_KEY_DOWN);
                 break;
 
-            case SDL_KEYUP:
+            case SDL_EVENT_KEY_UP:
                 process_key_event(&ev.key, INPUT_KEY_UP);
                 break;
 
-            case SDL_TEXTINPUT:
+            case SDL_EVENT_TEXT_INPUT:
                 process_text_input(&ev.text);
                 break;
 
-            case SDL_MOUSEBUTTONDOWN:
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 process_mouse_button(&ev.button, INPUT_MOUSE_DOWN);
                 break;
 
-            case SDL_MOUSEBUTTONUP:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
                 process_mouse_button(&ev.button, INPUT_MOUSE_UP);
                 break;
 
-            case SDL_MOUSEMOTION:
+            case SDL_EVENT_MOUSE_MOTION:
                 process_mouse_motion(&ev.motion);
                 break;
 
-            case SDL_MOUSEWHEEL:
+            case SDL_EVENT_MOUSE_WHEEL:
                 process_mouse_wheel(&ev.wheel);
                 break;
 
-            case SDL_WINDOWEVENT:
-                if (ev.window.event == SDL_WINDOWEVENT_RESIZED ||
-                    ev.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) {
-                    p->resize_pending = true;
-                    p->resize_w = ev.window.data1;
-                    p->resize_h = ev.window.data2;
-                }
+            case SDL_EVENT_WINDOW_RESIZED:
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+                p->resize_pending = true;
+                p->resize_w = ev.window.data1;
+                p->resize_h = ev.window.data2;
                 break;
 
-            case SDL_CONTROLLERDEVICEADDED:
-                open_controller(p, ev.cdevice.which);
+            case SDL_EVENT_GAMEPAD_ADDED:
+                open_gamepad(p, ev.gdevice.which);
                 break;
 
-            case SDL_CONTROLLERDEVICEREMOVED:
-                close_controller(p, ev.cdevice.which);
+            case SDL_EVENT_GAMEPAD_REMOVED:
+                close_gamepad(p, ev.gdevice.which);
                 break;
 
             default:
@@ -648,8 +641,8 @@ void platform_set_window_size(Platform *p, int w, int h)
 {
     if (!p || !p->window || w <= 0 || h <= 0) return;
     SDL_SetWindowSize(p->window, w, h);
-    int display = SDL_GetWindowDisplayIndex(p->window);
-    if (display < 0) display = 0;
+    SDL_DisplayID display = SDL_GetDisplayForWindow(p->window);
+    if (display == 0) display = SDL_GetPrimaryDisplay();
     SDL_SetWindowPosition(p->window, SDL_WINDOWPOS_CENTERED_DISPLAY(display),
                           SDL_WINDOWPOS_CENTERED_DISPLAY(display));
 }
@@ -661,11 +654,10 @@ float platform_get_desktop_scale(Platform *p)
        SDL sizes windows in points and the scaling is applied for us. */
     if (platform_get_display_scale(p) > 1.0f) return 1.0f;
 
-    int display = SDL_GetWindowDisplayIndex(p->window);
-    if (display < 0) display = 0;
-    float ddpi = 0.0f;
-    if (SDL_GetDisplayDPI(display, &ddpi, NULL, NULL) != 0 || ddpi <= 0.0f) return 1.0f;
-    float scale = ddpi / 96.0f;
+    SDL_DisplayID display = SDL_GetDisplayForWindow(p->window);
+    if (display == 0) display = SDL_GetPrimaryDisplay();
+    float scale = SDL_GetDisplayContentScale(display);
+    if (scale <= 0.0f) return 1.0f;
     if (scale < 1.0f) scale = 1.0f;
     if (scale > 4.0f) scale = 4.0f;
     return scale;
@@ -682,32 +674,31 @@ void platform_set_window_title(Platform *p, const char *title)
 void platform_set_fullscreen(Platform *p, bool fullscreen)
 {
     if (!p || !p->window) return;
-    /* Borderless desktop fullscreen avoids a display mode switch. */
-    Uint32 flag = fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0;
-    SDL_SetWindowFullscreen(p->window, flag);
+    /* A NULL fullscreen mode means borderless desktop, which avoids a
+       display mode switch. */
+    SDL_SetWindowFullscreenMode(p->window, NULL);
+    SDL_SetWindowFullscreen(p->window, fullscreen);
 }
 
 bool platform_is_fullscreen(Platform *p)
 {
     if (!p || !p->window) return false;
-    Uint32 flags = SDL_GetWindowFlags(p->window);
-    return (flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_FULLSCREEN_DESKTOP)) != 0;
+    return (SDL_GetWindowFlags(p->window) & SDL_WINDOW_FULLSCREEN) != 0;
 }
 
 /* Display information */
 
 void platform_get_display_size(Platform *p, int *w, int *h)
 {
-    int display_index = 0;
-    if (p && p->window) {
-        display_index = SDL_GetWindowDisplayIndex(p->window);
-        if (display_index < 0) display_index = 0;
-    }
+    SDL_DisplayID display = 0;
+    if (p && p->window)
+        display = SDL_GetDisplayForWindow(p->window);
+    if (display == 0) display = SDL_GetPrimaryDisplay();
 
-    SDL_DisplayMode mode;
-    if (SDL_GetDesktopDisplayMode(display_index, &mode) == 0) {
-        if (w) *w = mode.w;
-        if (h) *h = mode.h;
+    const SDL_DisplayMode *mode = SDL_GetDesktopDisplayMode(display);
+    if (mode) {
+        if (w) *w = mode->w;
+        if (h) *h = mode->h;
     } else {
         if (w) *w = 1920;
         if (h) *h = 1080;
@@ -716,20 +707,14 @@ void platform_get_display_size(Platform *p, int *w, int *h)
 
 float platform_get_display_scale(Platform *p)
 {
-    int display_index = 0;
+    /* The drawable/window size ratio is a reliable HiDPI proxy, and unlike
+       the display's content scale it reflects what GL actually renders to. */
     if (p && p->window) {
-        display_index = SDL_GetWindowDisplayIndex(p->window);
-        if (display_index < 0) display_index = 0;
-    }
-
-    /* SDL_GetDisplayDPI is not available everywhere; the drawable/window
-       size ratio is a reliable HiDPI proxy. */
-    if (p && p->window) {
-        int win_w, gl_w;
+        int win_w = 0, px_w = 0;
         SDL_GetWindowSize(p->window, &win_w, NULL);
-        SDL_GL_GetDrawableSize(p->window, &gl_w, NULL);
+        SDL_GetWindowSizeInPixels(p->window, &px_w, NULL);
         if (win_w > 0) {
-            float scale = (float)gl_w / (float)win_w;
+            float scale = (float)px_w / (float)win_w;
             if (scale >= 1.0f) return scale;
         }
     }

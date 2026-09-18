@@ -1,17 +1,17 @@
 include(FetchContent)
 
-# SDL2
+# SDL3 — window, input, audio device and the GPU rendering backend.
 FetchContent_Declare(
-    SDL2
+    SDL3
     GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
-    GIT_TAG        release-2.30.10
+    GIT_TAG        release-3.4.16
     GIT_SHALLOW    TRUE
 )
 set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
-set(SDL_TEST OFF CACHE BOOL "" FORCE)
-set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
-FetchContent_MakeAvailable(SDL2)
+set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(SDL3)
 
 # QuickJS-NG
 FetchContent_Declare(
@@ -63,8 +63,9 @@ add_library(soloud STATIC
     ${SOLOUD_SRC}/audiosource/wav/soloud_wavstream.cpp
     ${SOLOUD_SRC}/audiosource/wav/stb_vorbis.c
     ${SOLOUD_SRC}/audiosource/wav/dr_impl.cpp
-    # Backend — SDL2 static
-    ${SOLOUD_SRC}/backend/sdl2_static/soloud_sdl2_static.cpp
+    # Backend — SDL3. SoLoud ships no SDL3 backend, so ours stands in for the
+    # sdl2_static one it does ship: same entry point, so Soloud::AUTO finds it.
+    ${CMAKE_SOURCE_DIR}/src/audio/soloud_sdl3_backend.cpp
     # Backend — null (for headless testing)
     ${SOLOUD_SRC}/backend/null/soloud_null.cpp
 )
@@ -75,7 +76,7 @@ target_compile_definitions(soloud PRIVATE WITH_SDL2_STATIC WITH_NULL
     # soloud_thread.cpp tries to include pthread.h.
     $<$<BOOL:${WIN32}>:WINDOWS_VERSION>
 )
-target_link_libraries(soloud PRIVATE SDL2::SDL2)
+target_link_libraries(soloud PRIVATE SDL3::SDL3)
 set_target_properties(soloud PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Effekseer particle effects SDK (optional — stub backend used when unavailable)

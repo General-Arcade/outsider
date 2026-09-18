@@ -7,7 +7,7 @@
 #include "platform/platform.h"
 
 #include <quickjs.h>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <stdio.h>
 
 static Platform *s_platform = NULL;
@@ -97,14 +97,14 @@ static JSValue js_platform_set_window_title(JSContext *ctx, JSValueConst this_va
     return JS_UNDEFINED;
 }
 
-/* quit() - push an SDL_QUIT event to terminate the game loop. */
+/* quit() - push an SDL_EVENT_QUIT event to terminate the game loop. */
 static JSValue js_platform_quit(JSContext *ctx, JSValueConst this_val,
                                 int argc, JSValueConst *argv)
 {
     (void)ctx; (void)this_val; (void)argc; (void)argv;
     SDL_Event event;
     SDL_memset(&event, 0, sizeof(event));
-    event.type = SDL_QUIT;
+    event.type = SDL_EVENT_QUIT;
     SDL_PushEvent(&event);
     return JS_UNDEFINED;
 }

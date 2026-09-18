@@ -11,8 +11,8 @@
 #include "bindings/bind_platform.h"
 #include "bindings/bind_io.h"
 
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_opengl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,8 +115,7 @@ static void test_resize_detection(void)
     /* Push a fake resize event to test the detection mechanism. */
     SDL_Event ev;
     memset(&ev, 0, sizeof(ev));
-    ev.type = SDL_WINDOWEVENT;
-    ev.window.event = SDL_WINDOWEVENT_RESIZED;
+    ev.type = SDL_EVENT_WINDOW_RESIZED;
     ev.window.data1 = 1024;
     ev.window.data2 = 768;
     SDL_PushEvent(&ev);

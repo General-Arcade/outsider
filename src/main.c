@@ -32,8 +32,11 @@
 #include "io/file_io.h"
 #include "platform/win_console.h"
 
-#include <SDL.h>
-#include <SDL_opengl.h>
+#include <SDL3/SDL.h>
+/* SDL3 dropped the SDL2main library: including this header in the file that
+   defines main() supplies the Windows GUI-subsystem WinMain entry point. */
+#include <SDL3/SDL_main.h>
+#include <SDL3/SDL_opengl.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -67,10 +70,10 @@ static void fatal_error(const char *fmt, ...)
    the runtime can be launched without arguments (e.g. by double-click). */
 static bool find_dir_next_to_exe(const char *name, char *out, size_t out_size)
 {
-    char *base = SDL_GetBasePath();
+    /* SDL3 owns this string; it must not be freed. */
+    const char *base = SDL_GetBasePath();
     if (!base) return false;
     int n = snprintf(out, out_size, "%s%s", base, name);
-    SDL_free(base);
     if (n <= 0 || (size_t)n >= out_size) return false;
     return file_io_is_directory(out);
 }
