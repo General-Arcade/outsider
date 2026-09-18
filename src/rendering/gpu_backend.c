@@ -13,6 +13,10 @@
 
 #define GPU_TARGET_FORMAT SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM
 
+/* Largest quad count a single sprite_batch flush can hand over, and so the
+   size of the shared index buffer. Matches sprite_batch_create's own cap. */
+#define GPU_MAX_BATCH_QUADS 16384
+
 /* Filter passes draw this unit quad. NDC +1 is the target's first row, so V
    has to run against Y for the pass to be an identity copy. */
 static const float QUAD_VERTICES[] = {
@@ -98,6 +102,7 @@ static struct {
     SDL_GPUSampler *sampler_linear;
 
     SDL_GPUBuffer  *quad_buffer;   /* QUAD_VERTICES then BLIT_VERTICES */
+    SDL_GPUBuffer  *index_buffer;  /* quad indices, shared by every draw */
     SDL_GPUBuffer  *vertex_buffer; /* recorded sprite vertices */
     uint32_t        vertex_buffer_capacity;
     SDL_GPUTransferBuffer *vertex_transfer;
@@ -122,6 +127,13 @@ static struct {
     uint32_t        cmd_count;
     uint32_t        cmd_capacity;
 
+    /* Texture uploads are gathered onto one command buffer and submitted
+       before the frame's draws, which all happen in gpu_submit(). */
+    SDL_GPUCommandBuffer  *upload_cmd;
+    SDL_GPUTransferBuffer **upload_transfers;
+    uint32_t               upload_count;
+    uint32_t               upload_capacity;
+
     /* Replay state */
     SDL_GPURenderPass *pass;
     SDL_GPUCommandBuffer *cmd_buffer;
@@ -133,6 +145,8 @@ static struct {
     bool            pending_clear;
     float           pending_clear_color[4];
 } G;
+
+static void flush_uploads(void);
 
 /* Shader loading */
 
@@ -372,14 +386,52 @@ bool gpu_backend_init(SDL_Window *window)
     memcpy(dst + sizeof(QUAD_VERTICES), BLIT_VERTICES, sizeof(BLIT_VERTICES));
     SDL_UnmapGPUTransferBuffer(G.device, tb);
 
+    /* Indices for the largest batch a sprite flush can produce. Each quad is
+       two triangles over four vertices, in the same order as the GL backend. */
+    Uint16 *indices = malloc(GPU_MAX_BATCH_QUADS * 6 * sizeof(Uint16));
+    if (!indices) {
+        gpu_backend_shutdown();
+        return false;
+    }
+    for (int q = 0; q < GPU_MAX_BATCH_QUADS; q++) {
+        Uint16 v = (Uint16)(q * 4);
+        Uint16 *ix = &indices[q * 6];
+        ix[0] = v; ix[1] = v + 1; ix[2] = v + 2;
+        ix[3] = v + 1; ix[4] = v + 3; ix[5] = v + 2;
+    }
+    SDL_GPUBufferCreateInfo ii;
+    SDL_zero(ii);
+    ii.usage = SDL_GPU_BUFFERUSAGE_INDEX;
+    ii.size = GPU_MAX_BATCH_QUADS * 6 * (Uint32)sizeof(Uint16);
+    G.index_buffer = SDL_CreateGPUBuffer(G.device, &ii);
+
+    SDL_GPUTransferBufferCreateInfo iti;
+    SDL_zero(iti);
+    iti.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    iti.size = ii.size;
+    SDL_GPUTransferBuffer *itb = SDL_CreateGPUTransferBuffer(G.device, &iti);
+    if (!G.index_buffer || !itb) {
+        free(indices);
+        gpu_backend_shutdown();
+        return false;
+    }
+    void *idst = SDL_MapGPUTransferBuffer(G.device, itb, false);
+    memcpy(idst, indices, ii.size);
+    SDL_UnmapGPUTransferBuffer(G.device, itb);
+    free(indices);
+
     SDL_GPUCommandBuffer *cb = SDL_AcquireGPUCommandBuffer(G.device);
     SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cb);
     SDL_GPUTransferBufferLocation src = { tb, 0 };
     SDL_GPUBufferRegion region = { G.quad_buffer, 0, bi.size };
     SDL_UploadToGPUBuffer(cp, &src, &region, false);
+    SDL_GPUTransferBufferLocation isrc = { itb, 0 };
+    SDL_GPUBufferRegion iregion = { G.index_buffer, 0, ii.size };
+    SDL_UploadToGPUBuffer(cp, &isrc, &iregion, false);
     SDL_EndGPUCopyPass(cp);
     SDL_SubmitGPUCommandBuffer(cb);
     SDL_ReleaseGPUTransferBuffer(G.device, tb);
+    SDL_ReleaseGPUTransferBuffer(G.device, itb);
 
     G.ready = true;
 
@@ -391,6 +443,7 @@ bool gpu_backend_init(SDL_Window *window)
 void gpu_backend_shutdown(void)
 {
     if (!G.device) return;
+    flush_uploads();
     SDL_WaitForGPUIdle(G.device);
 
     for (uint32_t i = 0; i < G.texture_capacity; i++) {
@@ -409,6 +462,7 @@ void gpu_backend_shutdown(void)
     }
     if (G.screen) SDL_ReleaseGPUTexture(G.device, G.screen);
     if (G.quad_buffer) SDL_ReleaseGPUBuffer(G.device, G.quad_buffer);
+    if (G.index_buffer) SDL_ReleaseGPUBuffer(G.device, G.index_buffer);
     if (G.vertex_buffer) SDL_ReleaseGPUBuffer(G.device, G.vertex_buffer);
     if (G.vertex_transfer) SDL_ReleaseGPUTransferBuffer(G.device, G.vertex_transfer);
     if (G.sampler_nearest) SDL_ReleaseGPUSampler(G.device, G.sampler_nearest);
@@ -420,6 +474,7 @@ void gpu_backend_shutdown(void)
     free(G.vertices);
     free(G.uniforms);
     free(G.cmds);
+    free(G.upload_transfers);
     SDL_zero(G);
 }
 
@@ -533,11 +588,28 @@ void gpu_texture_upload(uint32_t id, int width, int height, const uint8_t *pixel
     memcpy(dst, pixels, bytes);
     SDL_UnmapGPUTransferBuffer(G.device, tb);
 
-    /* Uploads ride their own command buffer: a copy pass cannot be opened
-       while the frame's render pass is recording, and submission order makes
-       the data visible to everything queued afterwards. */
-    SDL_GPUCommandBuffer *cb = SDL_AcquireGPUCommandBuffer(G.device);
-    SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(cb);
+    /* Uploads ride a command buffer of their own: a copy pass cannot be
+       opened while a render pass is recording. One buffer collects every
+       upload and is submitted ahead of the frame's draws, so a texture is
+       always current by the time anything samples it. */
+    if (!G.upload_cmd) G.upload_cmd = SDL_AcquireGPUCommandBuffer(G.device);
+    if (!G.upload_cmd) {
+        SDL_ReleaseGPUTransferBuffer(G.device, tb);
+        return;
+    }
+    if (G.upload_count == G.upload_capacity) {
+        uint32_t cap = G.upload_capacity ? G.upload_capacity * 2 : 64;
+        SDL_GPUTransferBuffer **t = realloc(G.upload_transfers, cap * sizeof(*t));
+        if (!t) {
+            SDL_ReleaseGPUTransferBuffer(G.device, tb);
+            return;
+        }
+        G.upload_transfers = t;
+        G.upload_capacity = cap;
+    }
+    G.upload_transfers[G.upload_count++] = tb;
+
+    SDL_GPUCopyPass *cp = SDL_BeginGPUCopyPass(G.upload_cmd);
     SDL_GPUTextureTransferInfo src;
     SDL_zero(src);
     src.transfer_buffer = tb;
@@ -551,8 +623,18 @@ void gpu_texture_upload(uint32_t id, int width, int height, const uint8_t *pixel
     region.d = 1;
     SDL_UploadToGPUTexture(cp, &src, &region, false);
     SDL_EndGPUCopyPass(cp);
-    SDL_SubmitGPUCommandBuffer(cb);
-    SDL_ReleaseGPUTransferBuffer(G.device, tb);
+}
+
+/* Submit any gathered texture uploads. Their transfer buffers are released
+   straight away: SDL keeps them alive until the copy has run. */
+static void flush_uploads(void)
+{
+    if (!G.upload_cmd) return;
+    SDL_SubmitGPUCommandBuffer(G.upload_cmd);
+    G.upload_cmd = NULL;
+    for (uint32_t i = 0; i < G.upload_count; i++)
+        SDL_ReleaseGPUTransferBuffer(G.device, G.upload_transfers[i]);
+    G.upload_count = 0;
 }
 
 /* Screen texture */
@@ -666,18 +748,13 @@ void gpu_record_sprites(const GpuVertex *verts, int quad_count, uint32_t texture
                         float premultiplied)
 {
     if (quad_count <= 0 || !verts) return;
-    /* Quads are stored as two triangles; the GL backend used an index buffer,
-       but six vertices per quad keeps the upload a single linear copy. */
-    uint32_t needed = (uint32_t)quad_count * 6;
+    if (quad_count > GPU_MAX_BATCH_QUADS) quad_count = GPU_MAX_BATCH_QUADS;
+    /* Four vertices per quad; the shared index buffer assembles the two
+       triangles, so the arena copy stays a single memcpy. */
+    uint32_t needed = (uint32_t)quad_count * 4;
     if (!reserve_vertices(needed)) return;
 
-    GpuVertex *out = &G.vertices[G.vertex_count];
-    for (int q = 0; q < quad_count; q++) {
-        const GpuVertex *s = &verts[q * 4];   /* TL, TR, BL, BR */
-        out[0] = s[0]; out[1] = s[1]; out[2] = s[2];
-        out[3] = s[1]; out[4] = s[3]; out[5] = s[2];
-        out += 6;
-    }
+    memcpy(&G.vertices[G.vertex_count], verts, needed * sizeof(GpuVertex));
 
     GpuCmd *c = push_cmd(CMD_SPRITES);
     if (!c) return;
@@ -787,12 +864,16 @@ static void replay_sprites(const GpuCmd *c)
     if (!tsb.texture) return;
     SDL_BindGPUFragmentSamplers(G.pass, 0, &tsb, 1);
 
+    SDL_GPUBufferBinding ib = { G.index_buffer, 0 };
+    SDL_BindGPUIndexBuffer(G.pass, &ib, SDL_GPU_INDEXELEMENTSIZE_16BIT);
+
     SDL_PushGPUVertexUniformData(G.cmd_buffer, 0, c->sprites.projection,
                                  16 * sizeof(float));
     float frag[4] = { c->sprites.premultiplied, 0, 0, 0 };
     SDL_PushGPUFragmentUniformData(G.cmd_buffer, 0, frag, sizeof(frag));
 
-    SDL_DrawGPUPrimitives(G.pass, (Uint32)c->sprites.quad_count * 6, 1, 0, 0);
+    SDL_DrawGPUIndexedPrimitives(G.pass, (Uint32)c->sprites.quad_count * 6,
+                                 1, 0, 0, 0);
 }
 
 static void replay_filter(const GpuCmd *c)
@@ -878,6 +959,7 @@ static bool upload_vertices(void)
 
 void gpu_submit(void)
 {
+    flush_uploads();
     if (!G.ready || G.cmd_count == 0) {
         G.cmd_count = 0;
         G.vertex_count = 0;
