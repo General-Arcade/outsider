@@ -12,9 +12,12 @@
 #include <string.h>
 
 /* Reject plugin names containing path separators or traversal. */
+/* Plugin names are paths under js/plugins/ and may use subfolders
+   ("Pocket/Pocket_Mirror_BASE"); only escaping that folder is rejected. */
 static bool is_valid_plugin_name(const char *name)
 {
-    return !(strchr(name, '/') || strchr(name, '\\') || strstr(name, ".."));
+    if (!name || !*name || name[0] == '/' || strchr(name, '\\') || strchr(name, ':')) return false;
+    return strstr(name, "..") == NULL;
 }
 
 /* Join dir + file with exactly one separator. Returns a malloc'd string. */
@@ -225,6 +228,19 @@ void script_loader_free_plugins(PluginList *list)
     free(list);
 }
 
+/* Tell the DOM shim a game script (path relative to the game directory)
+   has been evaluated, so a <script src> the game inserts for the same file
+   later is not run a second time (browsers never run a script twice
+   either; FOSSIL and similar loaders re-request the core scripts). */
+static void note_script_loaded(JSEngine *engine, const char *rel_path)
+{
+    char code[1024];
+    snprintf(code, sizeof(code),
+             "if (typeof __dom_noteScriptLoaded === 'function') __dom_noteScriptLoaded('%s');",
+             rel_path);
+    js_engine_eval(engine, code, "<note-script-loaded>");
+}
+
 /* Shim files loaded before any game scripts. Order matters. */
 static const char *SHIM_FILES[] = {
     "dom_shim.js",
@@ -306,6 +322,7 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
                 fprintf(stderr, "script_loader: warning: failed to load lib: %s\n", path);
             }
             js_engine_execute_pending_jobs(engine);
+            note_script_loaded(engine, LIB_SCRIPTS[i]);
         } else {
             fprintf(stderr, "script_loader: warning: lib not found: %s\n", path);
         }
@@ -326,6 +343,7 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
                         RMMZ_CORE_SCRIPTS[i]);
             }
             js_engine_execute_pending_jobs(engine);
+            note_script_loaded(engine, RMMZ_CORE_SCRIPTS[i]);
         } else {
             fprintf(stderr, "script_loader: warning: core script not found: %s\n", path);
         }
@@ -339,6 +357,7 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
         /* Evaluating plugins.js defines $plugins. */
         js_engine_eval_file(engine, plugins_path);
         js_engine_execute_pending_jobs(engine);
+        note_script_loaded(engine, "js/plugins.js");
 
         /* Register every plugin's parameters and name before evaluating any
            plugin script. In a browser PluginManager.setup() does both for all

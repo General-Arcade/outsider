@@ -264,21 +264,23 @@
 
     /* CSSStyleDeclaration (minimal) */
 
+    var CSS_PROPERTIES = ("cssText cursor display width height minWidth minHeight maxWidth maxHeight " +
+        "position top left right bottom overflow overflowX overflowY margin marginTop marginRight " +
+        "marginBottom marginLeft padding paddingTop paddingRight paddingBottom paddingLeft zIndex " +
+        "opacity visibility background backgroundColor backgroundImage backgroundSize " +
+        "backgroundPosition backgroundRepeat imageRendering color font fontFamily fontSize " +
+        "fontWeight fontStyle lineHeight letterSpacing textAlign textDecoration textShadow " +
+        "whiteSpace wordBreak border borderTop borderRight borderBottom borderLeft borderWidth " +
+        "borderColor borderStyle borderRadius outline boxShadow boxSizing transform " +
+        "transformOrigin transformStyle perspective perspectiveOrigin backfaceVisibility " +
+        "transition transitionProperty transitionDuration animation filter backdropFilter " +
+        "clipPath mixBlendMode willChange pointerEvents userSelect flex flexDirection flexWrap " +
+        "justifyContent alignItems alignSelf gap objectFit objectPosition verticalAlign " +
+        "float clear content resize webkitTransform webkitTransformOrigin webkitFilter " +
+        "webkitUserSelect webkitBackfaceVisibility webkitPerspective webkitTransition").split(" ");
+
     function CSSStyleDeclaration() {
-        this.cssText = "";
-        this.cursor = "";
-        this.display = "";
-        this.width = "";
-        this.height = "";
-        this.position = "";
-        this.overflow = "";
-        this.margin = "";
-        this.padding = "";
-        this.zIndex = "";
-        this.opacity = "";
-        this.background = "";
-        this.backgroundColor = "";
-        this.imageRendering = "";
+        for (var i = 0; i < CSS_PROPERTIES.length; i++) this[CSS_PROPERTIES[i]] = "";
     }
 
     CSSStyleDeclaration.prototype.setProperty = function(name, value) {
@@ -335,6 +337,76 @@
     /* Suppresses registry removal while appendChild/insertBefore reparent via removeChild. */
     var _reparenting = false;
 
+    /* True when the element hangs off the document (body, head or html). */
+    function _isConnected(el) {
+        for (var p = el; p; p = p.parentNode) {
+            if (p === _body || p === _head || p === _documentElement) return true;
+        }
+        return false;
+    }
+
+    /* Scripts the runtime already evaluated (the loader announces them) and
+       browser libraries it replaces natively: a <script src> for one of
+       these fires load without running the file again. */
+    var _executedScripts = {
+        "js/libs/pixi.js": true, "js/libs/localforage.min.js": true,
+        "js/libs/effekseer.min.js": true, "js/libs/vorbisdecoder.js": true
+    };
+    function _scriptKey(src) {
+        var key = decodeURIComponent(String(src)).replace(/[?#].*$/, "").replace(/\\/g, "/");
+        return key.replace(/^\.\//, "");
+    }
+    globalThis.__dom_noteScriptLoaded = function(src) {
+        _executedScripts[_scriptKey(src)] = true;
+    };
+
+    /* A <script> inserted into the document runs, as in a browser: inline
+       text right away, a src file read from the game directory. Load/error
+       events fire on a later tick. Plugins use this to define globals
+       (FOSSIL) or pull in helper scripts. */
+    function _runInsertedScript(script) {
+        if (!script || script.tagName !== "SCRIPT" || script._executed) return;
+        if (!_isConnected(script)) return;
+        script._executed = true;
+        var src = script.src;
+        var source = null;
+        if (src) {
+            var key = _scriptKey(src);
+            if (_executedScripts[key]) {
+                setTimeout(function() { script.dispatchEvent(new Event("load")); }, 0);
+                return;
+            }
+            try {
+                if (typeof __native_io !== "undefined" && __native_io.existsSync(key)) {
+                    source = __native_io.readFileSync(key);
+                }
+            } catch (e) {
+                source = null;
+            }
+            if (source === null) {
+                setTimeout(function() { script.dispatchEvent(new Event("error")); }, 0);
+                return;
+            }
+            _executedScripts[key] = true;
+        } else {
+            source = script._innerHTML || "";
+        }
+        if (source && source.charCodeAt(0) === 0xFEFF) source = source.slice(1);
+        var previous = document.currentScript;
+        document.currentScript = script;
+        try {
+            (0, eval)(source);
+        } catch (e) {
+            if (typeof console !== "undefined") {
+                console.error("script " + (src || "(inline)") + ": " + (e && e.stack || e));
+            }
+        }
+        document.currentScript = previous;
+        if (src) {
+            setTimeout(function() { script.dispatchEvent(new Event("load")); }, 0);
+        }
+    }
+
     HTMLElement.prototype.appendChild = function(child) {
         if (child.parentNode) {
             _reparenting = true;
@@ -349,7 +421,33 @@
         if (_allCreatedElements && _allCreatedElements.indexOf(child) < 0) {
             _allCreatedElements.push(child);
         }
+        _runInsertedScript(child);
         return child;
+    };
+
+    /* insertAdjacentElement(position, element): beforebegin / afterbegin /
+       beforeend / afterend relative to this element. */
+    HTMLElement.prototype.insertAdjacentElement = function(position, element) {
+        var pos = String(position || "").toLowerCase();
+        var parent = this.parentNode;
+        if (pos === "beforebegin" && parent) {
+            parent.insertBefore(element, this);
+        } else if (pos === "afterbegin") {
+            this.insertBefore(element, this.children[0] || null);
+        } else if (pos === "afterend" && parent) {
+            var idx = parent.children.indexOf(this);
+            parent.insertBefore(element, parent.children[idx + 1] || null);
+        } else {
+            this.appendChild(element);
+        }
+        return element;
+    };
+
+    HTMLElement.prototype.insertAdjacentHTML = function(position, html) {
+        /* Markup is not parsed; a text-only fragment keeps the text. */
+        var el = new HTMLElement("SPAN");
+        el._innerHTML = String(html || "");
+        this.insertAdjacentElement(position, el);
     };
 
     HTMLElement.prototype.removeChild = function(child) {
@@ -394,6 +492,7 @@
         if (_allCreatedElements && _allCreatedElements.indexOf(newChild) < 0) {
             _allCreatedElements.push(newChild);
         }
+        _runInsertedScript(newChild);
         return newChild;
     };
 
@@ -1535,6 +1634,12 @@
     globalThis.self = window;
     globalThis.document = document;
     globalThis.Event = Event;
+    /* window.name: the browsing context name, "" by default. Scripts read
+       it as a bare global; without it that is a ReferenceError. */
+    if (typeof globalThis.name === "undefined") {
+        globalThis.name = "";
+    }
+
     globalThis.KeyboardEvent = KeyboardEvent;
     globalThis.MouseEvent = MouseEvent;
     globalThis.WheelEvent = WheelEvent;
@@ -1634,6 +1739,7 @@
        document.currentScript.src matches the plugin path, as in a browser. */
     globalThis.__dom_setCurrentScript = function(src) {
         if (src) {
+            __dom_noteScriptLoaded(src);
             var scriptEl = new HTMLElement("SCRIPT");
             scriptEl.tagName = "SCRIPT";
             scriptEl.src = src;

@@ -672,6 +672,85 @@ static void test_window(void)
     destroy_test_ctx(tc);
 }
 
+/* Tests: <script> elements inserted at run time */
+
+static void test_inserted_scripts(void)
+{
+    TestCtx *tc = create_test_ctx();
+    if (!tc) { TEST(script_setup); FAIL("engine setup"); return; }
+
+    TEST(inline_script_runs_when_inserted);
+    char *r = js_engine_eval_string(tc->engine,
+        "var s = document.createElement('script');\n"
+        "s.innerHTML = 'globalThis.__inlineRan = (globalThis.__inlineRan || 0) + 1;';\n"
+        "document.body.appendChild(s);\n"
+        "String(globalThis.__inlineRan)", "test");
+    if (r && strcmp(r, "1") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    TEST(detached_script_does_not_run);
+    r = js_engine_eval_string(tc->engine,
+        "var d = document.createElement('div');\n"
+        "var s2 = document.createElement('script');\n"
+        "s2.innerHTML = 'globalThis.__detachedRan = true;';\n"
+        "d.appendChild(s2);\n"
+        "String(globalThis.__detachedRan === undefined)", "test");
+    if (r && strcmp(r, "true") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    TEST(script_src_reads_the_game_file);
+    r = js_engine_eval_string(tc->engine,
+        "var s3 = document.createElement('script');\n"
+        "s3.src = 'tests/fixtures/inserted_script.js';\n"
+        "document.body.appendChild(s3);\n"
+        "String(globalThis.__fromFile)", "test");
+    if (r && strcmp(r, "42") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    TEST(script_already_loaded_is_not_run_again);
+    r = js_engine_eval_string(tc->engine,
+        /* The script loader announces every game script it evaluated; a
+           <script src> for one of those must not run the file a second
+           time (loader plugins re-request the core scripts). */
+        "globalThis.__fromFile = 0;\n"
+        "__dom_noteScriptLoaded('tests/fixtures/inserted_script.js');\n"
+        "var s4 = document.createElement('script');\n"
+        "s4.src = './tests/fixtures/inserted_script.js';\n"
+        "document.body.appendChild(s4);\n"
+        "String(globalThis.__fromFile)", "test");
+    if (r && strcmp(r, "0") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    TEST(insertAdjacentElement_positions);
+    r = js_engine_eval_string(tc->engine,
+        "var host = document.createElement('div');\n"
+        "var a = document.createElement('span');\n"
+        "var b = document.createElement('span');\n"
+        "document.body.appendChild(host);\n"
+        "host.insertAdjacentElement('beforebegin', a);\n"
+        "host.insertAdjacentElement('afterend', b);\n"
+        "var kids = document.body.children;\n"
+        "var i = kids.indexOf(host);\n"
+        "String(kids[i - 1] === a && kids[i + 1] === b)", "test");
+    if (r && strcmp(r, "true") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    TEST(style_has_standard_properties);
+    r = js_engine_eval_string(tc->engine,
+        /* Feature probes ("transform" in el.style) must see the property. */
+        "var el = document.createElement('div');\n"
+        "String(('transform' in el.style) && ('opacity' in el.style) && ('filter' in el.style))", "test");
+    if (r && strcmp(r, "true") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    TEST(window_name_defined);
+    r = js_engine_eval_string(tc->engine, "typeof name", "test");
+    if (r && strcmp(r, "string") == 0) { PASS(); } else { FAIL(r ? r : "NULL"); }
+    js_engine_free_string(r);
+
+    destroy_test_ctx(tc);
+}
+
 /* Tests: document object */
 
 static void test_document(void)
@@ -1085,6 +1164,7 @@ int main(void)
     test_window();
 
     printf("\n-- document --\n");
+    test_inserted_scripts();
     test_document();
 
     printf("\n-- navigator --\n");
