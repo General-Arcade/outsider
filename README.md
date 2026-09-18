@@ -34,6 +34,37 @@ runs on Linux and Windows from the same source tree.
 - **Packaging tools** that decrypt assets, convert audio and bundle a
   self-contained distribution.
 
+## Tested Games
+
+Commercial RPG Maker MZ games from Steam, run unmodified from their converted
+assets. All screenshots below are Outsider, not the original player.
+
+<table>
+  <tr>
+    <td align="center"><img src="screenshots/look-outside.png" alt="Look Outside running in Outsider" width="100%"><br><b>Look Outside</b></td>
+    <td align="center"><img src="screenshots/ann.png" alt="Ann running in Outsider" width="100%"><br><b>Ann</b></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="screenshots/drapline.png" alt="DRAPLINE Demo running in Outsider" width="100%"><br><b>DRAPLINE Demo</b></td>
+    <td align="center"><img src="screenshots/saihate-station.png" alt="Saihate Station running in Outsider" width="100%"><br><b>Saihate Station</b></td>
+  </tr>
+</table>
+
+| Game | Core | What it exercises |
+|------|------|-------------------|
+| **Look Outside** | 1.8.1 | Encrypted assets, a large plugin set, battles, autosave, plugin-defined scenes |
+| **Ann** | 1.2.0 | WOFF/OTF fonts, title and cutscene movies, VisuStella plugins, screen tints, `%`-encoded and `..` asset paths |
+| **DRAPLINE Demo** | 1.9.0 | 1920x1080, 216 plugins, 386 preloaded APNG pictures, HTML name-entry dialog, textured `PIXI.Graphics` fills, encounter effects, fullscreen-at-boot plugin |
+| **Saihate Station** | 1.8.1 | Third-party asset encryption (Art Encrypter), UTF-8 BOM data files, pre-title map with language selection, Korean and Japanese text |
+
+Each game is run scene by scene against its own NW.js player with the
+[visual evaluator](#visual-evaluator): title, options, load, map, every menu
+scene, message window, shop, name entry and battle. Across the four games
+the compared scenes differ from the original by 0 to 3% of pixels, almost
+all of it font anti-aliasing (Chrome hints glyphs, stb_truetype does not).
+Gameplay flow through a battle was verified frame by frame where the game
+has one.
+
 ## How It Works
 
 ```
