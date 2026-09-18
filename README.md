@@ -88,7 +88,7 @@ Browser API shims (src/shims/*.js)
         |
 QuickJS C bindings (src/bindings/)
         |
-Native backends: SDL3 (OpenGL or GPU), SoLoud, Effekseer
+Native backends: SDL3 GPU (OpenGL fallback), SoLoud, Effekseer
 ```
 
 The runtime behaves like a purpose-built browser. Scripts are loaded in the
@@ -151,7 +151,7 @@ console executable instead.
 |--------|---------|-------------|
 | `CMAKE_BUILD_TYPE` | Debug | Debug, Release, RelWithDebInfo, MinSizeRel |
 | `RMMZ_BUILD_TESTS` | ON | Build the test suite |
-| `RMMZ_RENDER_BACKEND` | gl | Rendering backend: `gl` (OpenGL 4.5) or `gpu` (SDL3 GPU) |
+| `RMMZ_RENDER_BACKEND` | gpu | Rendering backend: `gpu` (SDL3 GPU) or `gl` (OpenGL 4.5) |
 | `RMMZ_DEFAULT_WIDTH` / `RMMZ_DEFAULT_HEIGHT` | 816 / 624 | Initial window size |
 | `RMMZ_USE_EFFEKSEER` | OFF | Build the real Effekseer backend (stub otherwise) |
 | `RMMZ_WIN32_CONSOLE` | OFF | Windows: console subsystem instead of GUI |
@@ -160,12 +160,12 @@ console executable instead.
 
 ### Rendering backends
 
-The runtime renders through either OpenGL 4.5 or SDL3's GPU API, selected at
-build time:
+The runtime renders through SDL3's GPU API by default, with the original
+OpenGL 4.5 path kept as a fallback:
 
 ```bash
-cmake -B build -DRMMZ_RENDER_BACKEND=gl    # OpenGL 4.5 (default)
-cmake -B build -DRMMZ_RENDER_BACKEND=gpu   # SDL3 GPU: D3D12 or Vulkan
+cmake -B build                             # SDL3 GPU: D3D12 or Vulkan (default)
+cmake -B build -DRMMZ_RENDER_BACKEND=gl    # OpenGL 4.5 fallback
 ```
 
 Both produce the same image. `tools/compare_backends.py` runs a scenario
@@ -189,8 +189,11 @@ SDL3 having no immediate mode:
   shader.
 
 `tools/compile_shaders.py` emits DXIL, and SPIR-V as well when it finds a dxc
-built with the SPIR-V backend (the one in the Windows SDK is not; the Vulkan
-SDK's is). Without SPIR-V the GPU backend runs on D3D12 only.
+built with the SPIR-V backend (the Vulkan SDK ships one; the one in the Windows
+SDK does not). **Without SPIR-V the GPU backend runs on D3D12, so on Windows
+only** — configuring the default backend on another platform fails with a
+message pointing back here rather than building something that cannot start.
+Build with `-DRMMZ_RENDER_BACKEND=gl` until the SPIR-V shaders are generated.
 
 ## Usage
 

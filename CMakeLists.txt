@@ -14,12 +14,33 @@ endif()
 option(RMMZ_BUILD_TESTS "Build tests" ON)
 option(RMMZ_WIN32_CONSOLE "Windows: build outsider as a console application instead of a GUI application" OFF)
 
-# Rendering backend. "gl" is the original OpenGL 4.5 path; "gpu" targets SDL3's
-# GPU API (Vulkan or D3D12) with the shader bytecode in src/rendering/shaders.
-set(RMMZ_RENDER_BACKEND "gl" CACHE STRING "Rendering backend: gl or gpu")
-set_property(CACHE RMMZ_RENDER_BACKEND PROPERTY STRINGS gl gpu)
+# Rendering backend. "gpu" targets SDL3's GPU API (Vulkan or D3D12) with the
+# shader bytecode in src/rendering/shaders; "gl" is the original OpenGL 4.5
+# path, kept as a fallback for machines without a supported GPU backend.
+set(RMMZ_RENDER_BACKEND "gpu" CACHE STRING "Rendering backend: gpu or gl")
+set_property(CACHE RMMZ_RENDER_BACKEND PROPERTY STRINGS gpu gl)
 if(NOT RMMZ_RENDER_BACKEND MATCHES "^(gl|gpu)$")
-    message(FATAL_ERROR "RMMZ_RENDER_BACKEND must be gl or gpu")
+    message(FATAL_ERROR "RMMZ_RENDER_BACKEND must be gpu or gl")
+endif()
+
+# SDL3 takes shader bytecode, and only runs a backend whose format we ship.
+# tools/compile_shaders.py emits SPIR-V only when it finds a dxc built with the
+# SPIR-V backend; with DXIL alone the only usable backend is D3D12, so the
+# runtime would build everywhere and start on Windows only. Catch that here
+# rather than at launch.
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu" AND NOT WIN32)
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/src/rendering/shaders/shaders_generated.h"
+         RMMZ_SHADER_BLOBS_SRC)
+    string(FIND "${RMMZ_SHADER_BLOBS_SRC}" "_spv[]" RMMZ_HAVE_SPIRV)
+    unset(RMMZ_SHADER_BLOBS_SRC)
+    if(RMMZ_HAVE_SPIRV EQUAL -1)
+        message(FATAL_ERROR
+            "RMMZ_RENDER_BACKEND=gpu needs SPIR-V shaders on this platform, but "
+            "src/rendering/shaders/shaders_generated.h contains DXIL only.\n"
+            "Regenerate with a SPIR-V-capable dxc (the Vulkan SDK ships one):\n"
+            "    python tools/compile_shaders.py\n"
+            "or build the OpenGL backend with -DRMMZ_RENDER_BACKEND=gl.")
+    endif()
 endif()
 
 # Platform-specific system libraries and compiler settings.
