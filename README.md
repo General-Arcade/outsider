@@ -152,6 +152,7 @@ console executable instead.
 | `CMAKE_BUILD_TYPE` | Debug | Debug, Release, RelWithDebInfo, MinSizeRel |
 | `RMMZ_BUILD_TESTS` | ON | Build the test suite |
 | `RMMZ_RENDER_BACKEND` | gpu | Rendering backend: `gpu` (SDL3 GPU) or `gl` (OpenGL 4.5) |
+| `RMMZ_RUNTIME_SHADERS` | ON | Compile game-supplied shaders at run time (GPU backend only) |
 | `RMMZ_DEFAULT_WIDTH` / `RMMZ_DEFAULT_HEIGHT` | 816 / 624 | Initial window size |
 | `RMMZ_USE_EFFEKSEER` | OFF | Build the real Effekseer backend (stub otherwise) |
 | `RMMZ_WIN32_CONSOLE` | OFF | Windows: console subsystem instead of GUI |
@@ -174,19 +175,46 @@ Station, Aquarium and DRAPLINE every shot is pixel-identical, filters, masks,
 render textures and the HTML overlay included.
 
 The GPU backend keeps `renderer.h`, `sprite_batch.h` and `filters.h`
-unchanged, so the shims, bindings and tests are shared. Two things follow from
-SDL3 having no immediate mode:
+unchanged, so the shims, bindings and tests are shared. Three things follow
+from SDL3 having no immediate mode:
 
 - **Draws are recorded, then replayed.** A copy pass cannot run while a render
   pass is open, so vertices are gathered into one arena and uploaded once per
   frame, then the recorded commands are replayed. Readbacks (`Bitmap.snap`,
   screenshots) flush that queue first.
-- **Filter shaders must be bytecode.** `src/rendering/shaders/*.hlsl` is
-  compiled ahead of time by `tools/compile_shaders.py` into
-  `shaders_generated.h`, which is checked in, so building needs no shader
-  compiler. A plugin that supplies its own GLSL at run time cannot be compiled
-  and falls back to drawing unfiltered, exactly as it does when GL rejects a
-  shader.
+- **Frames are composed offscreen.** No graphics API guarantees the image being
+  presented can be read back — SDL3 says so outright, and Metal and Vulkan
+  agree — so both backends draw into an offscreen surface and blit it to the
+  window in `renderer_present`. Screenshots then mean the same thing
+  everywhere, and rendering does not depend on the window being visible.
+- **Built-in shaders are bytecode.** `src/rendering/shaders/*.hlsl` is compiled
+  ahead of time by `tools/compile_shaders.py` into `shaders_generated.h`, which
+  is checked in, so building needs no shader compiler.
+
+### Shaders a game brings with it
+
+RPG Maker plugins may create PIXI filters with their own GLSL. That GLSL is
+written for WebGL 1 — `varying`, `texture2D`, `gl_FragColor`, loose `uniform`
+declarations — which neither a modern OpenGL core profile nor SDL3 accepts, so
+these filters were silently drawn unfiltered.
+
+With `RMMZ_RUNTIME_SHADERS` (on by default for the GPU backend) they are
+rewritten by `src/rendering/glsl_translate.c` and compiled on the fly:
+
+```
+plugin GLSL ES -> glsl_translate -> glslang -> SPIR-V -> SDL_shadercross -> device format
+```
+
+The rewrite is declaration-only: the shader's own statements are never edited.
+Loose uniforms move into an *anonymous* block, so their names stay global and a
+local may still shadow them; uniform offsets are recorded so the JS side can go
+on setting them by name; and a vertex stage is generated per shader, because a
+pipeline is only valid when it writes every input the fragment stage declares.
+
+This adds roughly 4 MB to the binary and ships no redistributable compiler:
+D3D12 is reached through DXBC, which Windows' own `d3dcompiler` produces.
+Anything the rewrite cannot express still falls back to drawing unfiltered.
+Build with `-DRMMZ_RUNTIME_SHADERS=OFF` to leave the compiler out entirely.
 
 `tools/compile_shaders.py` emits all three formats through
 [SDL_shadercross](https://github.com/libsdl-org/SDL_shadercross), which knows
@@ -339,6 +367,7 @@ third_party/              Dependency fetching (CMake FetchContent) + vendored st
 | Library | Purpose |
 |---------|---------|
 | SDL3 3.4 | Window, rendering (OpenGL context or GPU API), input, audio device |
+| glslang, SPIRV-Cross, SDL_shadercross | Compiling game-supplied shaders at run time (optional) |
 | QuickJS-NG 0.9 | JavaScript engine |
 | SoLoud | Audio mixing, OGG/WAV decoding |
 | Effekseer 1.70e | Particle effects (optional) |
