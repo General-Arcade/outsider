@@ -1477,7 +1477,13 @@
         this.buttonMode = false;
         this.cursor = null;
 
-        this.blendMode = PIXI.BLEND_MODES.NORMAL;
+        /* PIXI's DisplayObject has no blendMode of its own; subclasses add
+           one. Plugins (VisuMZ TiledMZ) define it as an accessor on their
+           class, backed by state that does not exist yet in the base
+           constructor, so only seed a plain value where nothing defines it. */
+        if (!("blendMode" in this)) {
+            this.blendMode = PIXI.BLEND_MODES.NORMAL;
+        }
     }
 
     DisplayObject.prototype = Object.create(EventEmitter.prototype);
@@ -1938,6 +1944,13 @@
 
     Container.prototype.render = function(renderer) {
         if (!this.visible || this.worldAlpha <= 0 || !this.renderable) return;
+        /* A display object used as another's mask is not drawn itself; an
+           object with a mask is drawn through it (see _renderMasked). */
+        if (this.isMask) return;
+        if (this._mask && !this._renderingMasked && _canRenderMasked(this._mask)) {
+            this._renderMasked(renderer);
+            return;
+        }
 
         if (this.filters && this.filters.length > 0 &&
             !_filtersAreNoOp(this.filters) &&
@@ -2203,6 +2216,13 @@
 
     Sprite.prototype.render = function(renderer) {
         if (!this.visible || this.worldAlpha <= 0 || !this.renderable) return;
+        /* A display object used as another's mask is not drawn itself; an
+           object with a mask is drawn through it (see _renderMasked). */
+        if (this.isMask) return;
+        if (this._mask && !this._renderingMasked && _canRenderMasked(this._mask)) {
+            this._renderMasked(renderer);
+            return;
+        }
 
         /* Apply filterArea scissor clipping (used by Window._clientArea). */
         var fa = this.filterArea;
@@ -2384,6 +2404,13 @@
 
     TilingSprite.prototype.render = function(renderer) {
         if (!this.visible || this.worldAlpha <= 0 || !this.renderable) return;
+        /* A display object used as another's mask is not drawn itself; an
+           object with a mask is drawn through it (see _renderMasked). */
+        if (this.isMask) return;
+        if (this._mask && !this._renderingMasked && _canRenderMasked(this._mask)) {
+            this._renderMasked(renderer);
+            return;
+        }
         if (!this._texture || !this._texture.valid) return;
 
         if (typeof __native_renderer !== "undefined" && __native_renderer._active) {
@@ -2867,6 +2894,13 @@
 
     Graphics.prototype.render = function(renderer) {
         if (!this.visible || this.worldAlpha <= 0 || !this.renderable) return;
+        /* A display object used as another's mask is not drawn itself; an
+           object with a mask is drawn through it (see _renderMasked). */
+        if (this.isMask) return;
+        if (this._mask && !this._renderingMasked && _canRenderMasked(this._mask)) {
+            this._renderMasked(renderer);
+            return;
+        }
 
         if (typeof __native_renderer !== "undefined" && __native_renderer._active &&
             typeof __native_renderer.drawQuadVertices === "function") {
@@ -4607,6 +4641,28 @@
 
     PIXI.filters.BlurFilter = BlurFilter;
 
+    /* PIXI.filters.BlurFilterPass: one direction of PIXI's blur. Not used by
+       this renderer's blur, but plugins patch its prototype (Archeia's
+       SystemAdjust) or build their own pass, so the class must exist. */
+    function BlurFilterPass(horizontal, strength, quality, resolution, kernelSize) {
+        Filter.call(this);
+        this.horizontal = !!horizontal;
+        this.strength = strength !== undefined ? strength : 8;
+        this.quality = quality !== undefined ? quality : 4;
+        this.resolution = resolution !== undefined ? resolution : 1;
+        this.kernelSize = kernelSize !== undefined ? kernelSize : 5;
+        this.passes = this.quality;
+        this.uniforms.strength = 0;
+    }
+    BlurFilterPass.prototype = Object.create(Filter.prototype);
+    BlurFilterPass.prototype.constructor = BlurFilterPass;
+    Object.defineProperty(BlurFilterPass.prototype, "blur", {
+        get: function() { return this.strength; },
+        set: function(v) { this.padding = 1 + Math.abs(v) * 2; this.strength = v; }
+    });
+    BlurFilterPass.prototype.apply = function() {};
+    PIXI.filters.BlurFilterPass = BlurFilterPass;
+
     /* PIXI.filters.AlphaFilter */
 
     function AlphaFilter(alpha) {
@@ -4792,6 +4848,79 @@
             }
         }
 
+    };
+
+    /* --- Sprite / Graphics masks ---------------------------------------
+       PIXI multiplies the masked object's pixels by the mask's alpha. The
+       object (with its own filters) and the mask are each rendered to a
+       screen-sized texture, combined with the mask shader into a third one,
+       and that is composited onto the parent's target like a filter result. */
+    function _canRenderMasked(mask) {
+        return typeof mask.render === "function" &&
+            typeof __native_filters !== "undefined" && __native_filters.maskShader &&
+            typeof __native_renderer !== "undefined" && __native_renderer._active;
+    }
+
+    DisplayObject.prototype._renderMasked = function(renderer) {
+        var screenW = renderer && renderer.screen ? renderer.screen.width : 816;
+        var screenH = renderer && renderer.screen ? renderer.screen.height : 624;
+        var mask = this._mask;
+
+        __native_renderer.flush();
+        var restoreEntry = _fboStack.length > 0 ? _fboStack[_fboStack.length - 1] : null;
+
+        var renderInto = function(target, drawFn) {
+            var fbo = _acquireFilterFBO(screenW, screenH);
+            _fboStack.push({ fbo: fbo.fbo, w: screenW, h: screenH });
+            __native_renderer.bindRenderTexture(fbo.fbo, screenW, screenH);
+            __native_renderer.beginFrameTransparent();
+            try {
+                drawFn();
+            } finally {
+                __native_renderer.flush();
+                for (var si = _fboStack.length - 1; si >= 0; si--) {
+                    if (_fboStack[si].fbo === fbo.fbo) { _fboStack.splice(si, 1); break; }
+                }
+            }
+            return fbo;
+        };
+
+        var self = this;
+        var contentFBO = renderInto(null, function() {
+            self._renderingMasked = true;
+            try { self.render(renderer); } finally { self._renderingMasked = false; }
+        });
+        var maskFBO = renderInto(null, function() {
+            /* The mask draws with its own transform whatever its visibility. */
+            var wasMask = mask.isMask, wasVisible = mask.visible, wasRenderable = mask.renderable;
+            mask.isMask = false; mask.visible = true; mask.renderable = true;
+            try { mask.render(renderer); }
+            finally { mask.isMask = wasMask; mask.visible = wasVisible; mask.renderable = wasRenderable; }
+        });
+        var outFBO = renderInto(null, function() {
+            var shader = __native_filters.maskShader;
+            __native_filters.beginFilter(shader, contentFBO.texture, screenW, screenH);
+            __native_filters.setUniformTexture(shader, "u_mask", maskFBO.texture, 1);
+            __native_filters.drawQuad();
+            __native_filters.endFilter();
+        });
+
+        if (restoreEntry) {
+            __native_renderer.bindRenderTexture(restoreEntry.fbo, restoreEntry.w, restoreEntry.h);
+        } else {
+            __native_renderer.unbindRenderTexture();
+        }
+        __native_renderer.rebindBatch();
+
+        var BLEND_NORMAL_PREMULT = 4;
+        var objBlend = this.blendMode || 0;
+        __native_renderer.setBlendMode(objBlend === 0 ? BLEND_NORMAL_PREMULT : objBlend);
+        __native_renderer.drawQuad(outFBO.texture, 0, 0, screenW, screenH, 0, 1, 1, 0, 0xFFFFFF, 1.0);
+        __native_renderer.setBlendMode(objBlend);
+
+        _releaseFilterFBO(contentFBO);
+        _releaseFilterFBO(maskFBO);
+        _releaseFilterFBO(outFBO);
     };
 
     globalThis.PIXI = PIXI;

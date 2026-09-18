@@ -1710,6 +1710,59 @@ TEST(test_sprite_bitmap_deferred_release)
     js_teardown();
 }
 
+TEST(test_pixi_sprite_mask)
+{
+    /* A sprite with a mask is drawn through it: the sprite and the mask are
+       each rendered to a texture, combined with the mask shader, and the
+       result composited; the mask itself never appears on its own. */
+    js_setup_with_shims();
+    ASSERT(js_eval_bool(
+        "var calls = [];"
+        "var fbo = 100;"
+        "__native_renderer._active = true;"
+        "__native_renderer.flush = function() {};"
+        "__native_renderer.rebindBatch = function() {};"
+        "__native_renderer.setBlendMode = function() {};"
+        "__native_renderer.beginFrameTransparent = function() { calls.push('clear'); };"
+        "__native_renderer.bindRenderTexture = function(f) { calls.push('bind:' + f); };"
+        "__native_renderer.unbindRenderTexture = function() { calls.push('unbind'); };"
+        "__native_renderer.createRenderTexture = function() { fbo++; return { fbo: fbo, texture: fbo * 10 }; };"
+        "__native_renderer.deleteRenderTexture = function() {};"
+        "__native_renderer.drawQuad = function(tex) { calls.push('quad:' + tex); };"
+        "__native_renderer.drawQuadVertices = function() { calls.push('verts'); };"
+        "globalThis.__native_filters = { maskShader: 7,"
+        "  beginFilter: function(shader, tex) { calls.push('filter:' + shader + ':' + tex); },"
+        "  setUniformTexture: function(shader, name, tex) { calls.push('maskTex:' + name + ':' + tex); },"
+        "  drawQuad: function() { calls.push('filterQuad'); },"
+        "  endFilter: function() {} };"
+        "true;"
+    ));
+    ASSERT(js_eval_bool(
+        "var bt = new PIXI.BaseTexture(null, {}); bt.setSize(32, 32); bt.valid = true; bt._glTexture = 5;"
+        "var sprite = new PIXI.Sprite(new PIXI.Texture(bt));"
+        "var maskBt = new PIXI.BaseTexture(null, {}); maskBt.setSize(32, 32); maskBt.valid = true; maskBt._glTexture = 6;"
+        "var mask = new PIXI.Sprite(new PIXI.Texture(maskBt));"
+        "sprite.mask = mask;"
+        "mask.isMask === true && sprite.mask === mask;"
+    ));
+    ASSERT(js_eval_bool(
+        "var renderer = { screen: { width: 64, height: 64 } };"
+        "sprite.updateTransform(); sprite.render(renderer);"
+        /* the mask shader ran against the two rendered textures, and the
+           combined result was composited once */
+        "calls.filter(function(c) { return c.indexOf('filter:7:') === 0; }).length === 1 &&"
+        "calls.filter(function(c) { return c.indexOf('maskTex:u_mask:') === 0; }).length === 1 &&"
+        "calls.filter(function(c) { return c.indexOf('quad:') === 0; }).length === 1;"
+    ));
+    ASSERT(js_eval_bool(
+        /* A mask drawn on its own (as a child of the scene) is skipped. */
+        "calls.length = 0;"
+        "mask.updateTransform(); mask.render(renderer);"
+        "calls.length === 0;"
+    ));
+    js_teardown();
+}
+
 TEST(test_pixi_readpixels_binding)
 {
     js_setup_with_shims();
@@ -1802,6 +1855,7 @@ int main(void)
     RUN(test_pixi_readpixels_binding);
     RUN(test_pixi_graphics_texture_fill);
     RUN(test_sprite_bitmap_deferred_release);
+    RUN(test_pixi_sprite_mask);
 
     printf("\n%d/%d tests passed.\n", _tests_passed, _tests_run);
     return _tests_failed > 0 ? 1 : 0;

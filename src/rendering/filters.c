@@ -161,6 +161,18 @@ static const char *ALPHA_FRAG_SRC =
     "    fragColor = texture(u_texture, v_texcoord) * u_alpha;\n"
     "}\n";
 
+/* Sprite/Graphics masks: content multiplied by the mask's alpha, both
+   rendered to screen-sized textures beforehand. */
+static const char *MASK_FRAG_SRC =
+    "#version 450 core\n"
+    "in vec2 v_texcoord;\n"
+    "uniform sampler2D u_texture;\n"
+    "uniform sampler2D u_mask;\n"
+    "out vec4 fragColor;\n"
+    "void main() {\n"
+    "    fragColor = texture(u_texture, v_texcoord) * texture(u_mask, v_texcoord).a;\n"
+    "}\n";
+
 static int s_initialized = 0;
 
 #ifdef RMMZ_HAS_GL
@@ -305,6 +317,20 @@ void filter_begin(uint32_t program, uint32_t input_texture, int width, int heigh
 #endif
 }
 
+void filter_set_uniform_texture(uint32_t program, const char *name, uint32_t texture, int unit)
+{
+#ifdef RMMZ_HAS_GL
+    GLint loc = glGetUniformLocation(program, name);
+    if (loc < 0) return;
+    glActiveTexture(GL_TEXTURE0 + unit);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glUniform1i(loc, unit);
+    glActiveTexture(GL_TEXTURE0);
+#else
+    (void)program; (void)name; (void)texture; (void)unit;
+#endif
+}
+
 void filter_set_uniform_1f(uint32_t program, const char *name, float value)
 {
 #ifdef RMMZ_HAS_GL
@@ -368,3 +394,4 @@ const char *filter_color_matrix_frag_src(void) { return COLOR_MATRIX_FRAG_SRC; }
 const char *filter_blur_frag_src(void)     { return BLUR_FRAG_SRC; }
 const char *filter_alpha_frag_src(void)    { return ALPHA_FRAG_SRC; }
 const char *filter_color_filter_frag_src(void) { return COLOR_FILTER_FRAG_SRC; }
+const char *filter_mask_frag_src(void) { return MASK_FRAG_SRC; }

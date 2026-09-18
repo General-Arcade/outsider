@@ -17,6 +17,7 @@ static uint32_t s_color_matrix_shader = 0;
 static uint32_t s_blur_shader = 0;
 static uint32_t s_alpha_shader = 0;
 static uint32_t s_color_filter_shader = 0;
+static uint32_t s_mask_shader = 0;
 
 /* Lifecycle */
 
@@ -36,6 +37,8 @@ static JSValue js_filters_init(JSContext *ctx, JSValueConst this_val,
         s_alpha_shader = filter_compile_shader(NULL, filter_alpha_frag_src());
     if (!s_color_filter_shader)
         s_color_filter_shader = filter_compile_shader(NULL, filter_color_filter_frag_src());
+    if (!s_mask_shader)
+        s_mask_shader = filter_compile_shader(NULL, filter_mask_frag_src());
 
     if (!s_color_matrix_shader || !s_blur_shader ||
         !s_alpha_shader || !s_color_filter_shader) {
@@ -58,6 +61,8 @@ static JSValue js_filters_init(JSContext *ctx, JSValueConst this_val,
                           JS_NewUint32(ctx, s_alpha_shader));
         JS_SetPropertyStr(ctx, obj, "colorFilterShader",
                           JS_NewUint32(ctx, s_color_filter_shader));
+        JS_SetPropertyStr(ctx, obj, "maskShader",
+                          JS_NewUint32(ctx, s_mask_shader));
     }
     JS_FreeValue(ctx, obj);
     JS_FreeValue(ctx, global);
@@ -74,6 +79,7 @@ static JSValue js_filters_shutdown(JSContext *ctx, JSValueConst this_val,
     if (s_blur_shader) { filter_delete_shader(s_blur_shader); s_blur_shader = 0; }
     if (s_alpha_shader) { filter_delete_shader(s_alpha_shader); s_alpha_shader = 0; }
     if (s_color_filter_shader) { filter_delete_shader(s_color_filter_shader); s_color_filter_shader = 0; }
+    if (s_mask_shader) { filter_delete_shader(s_mask_shader); s_mask_shader = 0; }
     filters_shutdown();
     return JS_UNDEFINED;
 }
@@ -154,6 +160,26 @@ static JSValue js_filters_uniform_1f(JSContext *ctx, JSValueConst this_val,
     if (JS_ToFloat64(ctx, &val, argv[2])) { JS_FreeCString(ctx, name); return JS_EXCEPTION; }
 
     filter_set_uniform_1f(shader, name, (float)val);
+    JS_FreeCString(ctx, name);
+    return JS_UNDEFINED;
+}
+
+/* setUniformTexture(shader, name, texture, unit) */
+static JSValue js_filters_uniform_texture(JSContext *ctx, JSValueConst this_val,
+                                          int argc, JSValueConst *argv)
+{
+    (void)this_val;
+    if (argc < 4) return JS_UNDEFINED;
+    uint32_t shader, texture;
+    int unit;
+    if (JS_ToUint32(ctx, &shader, argv[0])) return JS_EXCEPTION;
+    const char *name = JS_ToCString(ctx, argv[1]);
+    if (!name) return JS_EXCEPTION;
+    if (JS_ToUint32(ctx, &texture, argv[2]) || JS_ToInt32(ctx, &unit, argv[3])) {
+        JS_FreeCString(ctx, name);
+        return JS_EXCEPTION;
+    }
+    filter_set_uniform_texture(shader, name, texture, unit);
     JS_FreeCString(ctx, name);
     return JS_UNDEFINED;
 }
@@ -288,6 +314,7 @@ static const JSCFunctionListEntry js_filters_funcs[] = {
     JS_CFUNC_DEF("beginFilter",     4, js_filters_begin),
     JS_CFUNC_DEF("setUniform1f",    3, js_filters_uniform_1f),
     JS_CFUNC_DEF("setUniform2f",    4, js_filters_uniform_2f),
+    JS_CFUNC_DEF("setUniformTexture", 4, js_filters_uniform_texture),
     JS_CFUNC_DEF("setUniform4f",    6, js_filters_uniform_4f),
     JS_CFUNC_DEF("setUniformMat4",  3, js_filters_uniform_mat4),
     JS_CFUNC_DEF("drawQuad",        0, js_filters_draw_quad),
@@ -304,6 +331,7 @@ void bind_filters_register(JSContext *ctx)
 
     /* Shader ID properties start at 0 and are filled in by init(). */
     JS_SetPropertyStr(ctx, obj, "colorMatrixShader", JS_NewUint32(ctx, 0));
+    JS_SetPropertyStr(ctx, obj, "maskShader", JS_NewUint32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "blurShader", JS_NewUint32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "alphaShader", JS_NewUint32(ctx, 0));
     JS_SetPropertyStr(ctx, obj, "colorFilterShader", JS_NewUint32(ctx, 0));

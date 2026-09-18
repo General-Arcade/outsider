@@ -34,6 +34,10 @@ void filter_begin(uint32_t program, uint32_t input_texture, int width, int heigh
 /* Set a float uniform on the currently bound filter shader. */
 void filter_set_uniform_1f(uint32_t program, const char *name, float value);
 
+/* Bind `texture` to texture unit `unit` (1 or higher; 0 is the input) for a
+   sampler uniform. */
+void filter_set_uniform_texture(uint32_t program, const char *name, uint32_t texture, int unit);
+
 /* Set a vec2 uniform. */
 void filter_set_uniform_2f(uint32_t program, const char *name, float x, float y);
 
@@ -56,5 +60,6 @@ const char *filter_color_matrix_frag_src(void);
 const char *filter_blur_frag_src(void);
 const char *filter_alpha_frag_src(void);
 const char *filter_color_filter_frag_src(void);
+const char *filter_mask_frag_src(void);
 
 #endif /* RMMZ_FILTERS_H */
