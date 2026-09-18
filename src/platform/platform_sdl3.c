@@ -7,7 +7,11 @@
 #include "input/input_manager.h"
 
 #include <SDL3/SDL.h>
+#ifdef RMMZ_RENDER_GPU
+#include "rendering/gpu_backend.h"
+#else
 #include "rendering/gl_loader.h"
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -485,15 +489,21 @@ Platform *platform_init(const char *title, int width, int height)
         fprintf(stderr, "Warning: gamepad init failed: %s\n", SDL_GetError());
 
 
+#ifndef RMMZ_RENDER_GPU
     /* OpenGL 4.5 core: the renderer relies on direct state access. */
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 5);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+#endif
 
     SDL_Window *window = SDL_CreateWindow(
         title, width, height,
+#ifdef RMMZ_RENDER_GPU
+        SDL_WINDOW_RESIZABLE
+#else
         SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
+#endif
     );
     if (!window) {
         fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
@@ -502,6 +512,15 @@ Platform *platform_init(const char *title, int width, int height)
     }
     SDL_SetWindowPosition(window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
 
+#ifdef RMMZ_RENDER_GPU
+    SDL_GLContext gl_ctx = NULL;
+    if (!gpu_backend_init(window)) {
+        fprintf(stderr, "No supported GPU backend (Vulkan or D3D12) available\n");
+        SDL_DestroyWindow(window);
+        SDL_Quit();
+        return NULL;
+    }
+#else
     SDL_GLContext gl_ctx = SDL_GL_CreateContext(window);
     if (!gl_ctx) {
         fprintf(stderr, "SDL_GL_CreateContext failed: %s\n", SDL_GetError());
@@ -509,11 +528,13 @@ Platform *platform_init(const char *title, int width, int height)
         SDL_Quit();
         return NULL;
     }
+#endif
 
     /* Typed text (layout- and IME-aware) for HTML input overlays; key
        events keep flowing regardless. */
     SDL_StartTextInput(window);
 
+#ifndef RMMZ_RENDER_GPU
     /* Windows' opengl32.dll exports only GL 1.1; newer entry points must be
        resolved from the driver at runtime. */
     if (gl_loader_init() != 0) {
@@ -525,10 +546,15 @@ Platform *platform_init(const char *title, int width, int height)
     }
 
     SDL_GL_SetSwapInterval(1);
+#endif
 
     Platform *p = calloc(1, sizeof(Platform));
     if (!p) {
+#ifdef RMMZ_RENDER_GPU
+        gpu_backend_shutdown();
+#else
         SDL_GL_DestroyContext(gl_ctx);
+#endif
         SDL_DestroyWindow(window);
         SDL_Quit();
         return NULL;
@@ -558,7 +584,11 @@ void platform_shutdown(Platform *p)
         }
     }
 
+#ifdef RMMZ_RENDER_GPU
+    gpu_backend_shutdown();
+#else
     if (p->gl_ctx) SDL_GL_DestroyContext(p->gl_ctx);
+#endif
     if (p->window) SDL_DestroyWindow(p->window);
     SDL_Quit();
     free(p);
@@ -628,7 +658,13 @@ bool platform_poll_events(Platform *p)
 void platform_swap_buffers(Platform *p)
 {
     if (!p || !p->window) return;
+#ifdef RMMZ_RENDER_GPU
+    /* The frame was composed into an offscreen texture; present blits it to
+       the swapchain. */
+    gpu_frame_present();
+#else
     SDL_GL_SwapWindow(p->window);
+#endif
 }
 
 void platform_get_window_size(Platform *p, int *w, int *h)

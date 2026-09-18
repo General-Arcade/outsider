@@ -14,6 +14,14 @@ endif()
 option(RMMZ_BUILD_TESTS "Build tests" ON)
 option(RMMZ_WIN32_CONSOLE "Windows: build outsider as a console application instead of a GUI application" OFF)
 
+# Rendering backend. "gl" is the original OpenGL 4.5 path; "gpu" targets SDL3's
+# GPU API (Vulkan or D3D12) with the shader bytecode in src/rendering/shaders.
+set(RMMZ_RENDER_BACKEND "gl" CACHE STRING "Rendering backend: gl or gpu")
+set_property(CACHE RMMZ_RENDER_BACKEND PROPERTY STRINGS gl gpu)
+if(NOT RMMZ_RENDER_BACKEND MATCHES "^(gl|gpu)$")
+    message(FATAL_ERROR "RMMZ_RENDER_BACKEND must be gl or gpu")
+endif()
+
 # Platform-specific system libraries and compiler settings.
 # On Linux/macOS libm and pthread are separate link libraries; on Windows
 # they are part of the CRT, so RMMZ_SYS_LIBS is empty there.
@@ -45,15 +53,32 @@ set(RMMZ_DEFAULT_HEIGHT 624 CACHE STRING "Default window height")
 # Third-party dependencies
 add_subdirectory(third_party)
 
-# Link OpenGL
+# Link OpenGL (the GL backend, and the tests, which build the headless
+# rendering sources)
 find_package(OpenGL REQUIRED)
+
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    set(RMMZ_RENDER_SOURCES
+        src/rendering/gpu_backend.c
+        src/rendering/sprite_batch_gpu.c
+        src/rendering/renderer_gpu.c
+        src/rendering/filters_gpu.c
+    )
+else()
+    set(RMMZ_RENDER_SOURCES
+        src/rendering/gl_loader.c
+        src/rendering/sprite_batch.c
+        src/rendering/renderer.c
+        src/rendering/filters.c
+    )
+endif()
 
 # Main runtime sources
 add_executable(outsider
     src/main.c
+    ${RMMZ_RENDER_SOURCES}
     src/platform/platform_sdl3.c
     src/platform/win_console.c
-    src/rendering/gl_loader.c
     src/engine/js_engine.c
     src/engine/game_loop.c
     src/engine/error_handler.c
@@ -80,10 +105,7 @@ add_executable(outsider
     src/rendering/canvas2d.c
     src/rendering/woff.c
     src/rendering/font_manager.c
-    src/rendering/sprite_batch.c
-    src/rendering/renderer.c
     src/rendering/tilemap.c
-    src/rendering/filters.c
 )
 
 # Windows: embed an application manifest so the process uses the UTF-8 code
@@ -109,9 +131,14 @@ target_include_directories(outsider PRIVATE
 target_compile_definitions(outsider PRIVATE
     RMMZ_DEFAULT_WIDTH=${RMMZ_DEFAULT_WIDTH}
     RMMZ_DEFAULT_HEIGHT=${RMMZ_DEFAULT_HEIGHT}
-    RMMZ_HAS_GL
     $<$<BOOL:${RMMZ_USE_EFFEKSEER}>:RMMZ_HAS_EFFEKSEER>
 )
+
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    target_compile_definitions(outsider PRIVATE RMMZ_RENDER_GPU)
+else()
+    target_compile_definitions(outsider PRIVATE RMMZ_HAS_GL)
+endif()
 
 target_link_libraries(outsider PRIVATE
     SDL3::SDL3

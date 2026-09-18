@@ -20,22 +20,14 @@
 #define STBI_NO_STDIO   /* We handle file I/O ourselves. */
 #include "stb_image.h"
 
-/* Headless builds get minimal GL typedefs instead of the GL headers. */
-#ifdef RMMZ_HAS_GL
-#include "rendering/gl_loader.h"
-#else
-typedef unsigned int GLenum;
-typedef unsigned int GLuint;
-typedef int          GLint;
-typedef int          GLsizei;
-#endif
+#include "rendering/renderer.h"
 
 typedef struct CacheEntry {
     char        *key;       /* File path or blob key (owned). */
     uint8_t     *pixels;    /* RGBA pixel data (stbi_image_free). */
     int          width;
     int          height;
-    uint32_t     gl_texture; /* OpenGL texture ID, 0 if none. */
+    uint32_t     gl_texture; /* Renderer texture id, 0 if none. */
     ImageHandle  handle;
     int          refcount;  /* Loads sharing this entry; freed when it hits 0. */
     struct CacheEntry *next;
@@ -75,29 +67,14 @@ static CacheEntry *cache_find_by_handle(ImageHandle handle)
     return s_handle_index[handle];
 }
 
+/* Texture creation goes through the renderer so the image cache works with
+   whichever rendering backend was built. */
 static uint32_t upload_gl_texture(const uint8_t *pixels, int w, int h)
 {
-#ifdef RMMZ_HAS_GL
-    GLuint tex = 0;
-    glCreateTextures(GL_TEXTURE_2D, 1, &tex);
-    glTextureStorage2D(tex, 1, GL_RGBA8, w, h);
-    glTextureParameteri(tex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTextureParameteri(tex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTextureSubImage2D(tex, 0, 0, 0, w, h,
-                        GL_RGBA, GL_UNSIGNED_BYTE, pixels);
-
-    GLenum err = glGetError();
-    if (err != GL_NO_ERROR) {
-        fprintf(stderr, "[GL_UPL] tex=%u %dx%d err=0x%X\n", tex, w, h, err);
-    }
-
-    return (uint32_t)tex;
-#else
-    (void)pixels; (void)w; (void)h;
-    return 0;
-#endif
+    uint32_t tex = renderer_create_texture(w, h);
+    if (!tex) return 0;
+    renderer_update_texture(tex, w, h, pixels);
+    return tex;
 }
 
 uint32_t image_upload_rgba_texture(const uint8_t *rgba, int width, int height)
@@ -108,14 +85,7 @@ uint32_t image_upload_rgba_texture(const uint8_t *rgba, int width, int height)
 
 static void delete_gl_texture(uint32_t tex)
 {
-#ifdef RMMZ_HAS_GL
-    if (tex) {
-        GLuint t = tex;
-        glDeleteTextures(1, &t);
-    }
-#else
-    (void)tex;
-#endif
+    if (tex) renderer_delete_texture(tex);
 }
 
 static CacheEntry *cache_insert(const char *key, uint8_t *pixels,
