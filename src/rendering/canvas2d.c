@@ -42,6 +42,33 @@ typedef struct {
 static FontEntry s_fonts[MAX_FONTS];
 static int       s_font_count = 0;
 
+/* --- Glyph fallback ---------------------------------------------------
+   A game's font rarely covers every script the game prints: a Korean font
+   with the database's Japanese parameter names, or symbols such as arrows.
+   Browsers substitute another installed font per glyph; so does this
+   renderer: first the other fonts the game loaded, then well-known system
+   fonts, read from disk the first time a glyph is missing. */
+static const char *const SYSTEM_FALLBACK_FILES[] = {
+#ifdef _WIN32
+    "YuGothM.ttc", "meiryo.ttc", "msgothic.ttc", "malgun.ttf", "msyh.ttc",
+    "simsun.ttc", "seguisym.ttf", "segoeui.ttf", "arial.ttf",
+#elif defined(__APPLE__)
+    "/System/Library/Fonts/PingFang.ttc",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+    "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+    "/System/Library/Fonts/Apple Symbols.ttf",
+#else
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+#endif
+};
+#define SYSTEM_FALLBACK_COUNT (sizeof(SYSTEM_FALLBACK_FILES) / sizeof(SYSTEM_FALLBACK_FILES[0]))
+static FontEntry   s_fallback_fonts[SYSTEM_FALLBACK_COUNT];
+static signed char s_fallback_state[SYSTEM_FALLBACK_COUNT];   /* 0 untried, 1 loaded, -1 unavailable */
+
 typedef struct {
     Canvas2DHandle handle;
     uint8_t       *pixels;       /* RGBA pixel buffer (owned). */
@@ -242,6 +269,15 @@ void canvas2d_shutdown(void)
         s_fonts[i].valid = false;
     }
     s_font_count = 0;
+
+    for (size_t i = 0; i < SYSTEM_FALLBACK_COUNT; i++) {
+        if (s_fallback_state[i] == 1) {
+            free(s_fallback_fonts[i].name);
+            free(s_fallback_fonts[i].data);
+        }
+        memset(&s_fallback_fonts[i], 0, sizeof(FontEntry));
+        s_fallback_state[i] = 0;
+    }
 }
 
 Canvas2DHandle canvas2d_create(int width, int height)
@@ -691,55 +727,143 @@ static float get_baseline_offset(stbtt_fontinfo *fi, float scale, int baseline)
     }
 }
 
+/* Decode one UTF-8 sequence, advancing *p. Invalid bytes become '?'. */
+static int utf8_next(const char **pp)
+{
+    const unsigned char *p = (const unsigned char *)*pp;
+    int cp;
+    if ((*p & 0x80) == 0) {
+        cp = *p; p += 1;
+    } else if ((*p & 0xE0) == 0xC0 && p[1]) {
+        cp = ((*p & 0x1F) << 6) | (p[1] & 0x3F); p += 2;
+    } else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) {
+        cp = ((*p & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F); p += 3;
+    } else if ((*p & 0xF8) == 0xF0 && p[1] && p[2] && p[3]) {
+        cp = ((*p & 0x07) << 18) | ((p[1] & 0x3F) << 12) | ((p[2] & 0x3F) << 6) | (p[3] & 0x3F); p += 4;
+    } else {
+        cp = '?'; p += 1;
+    }
+    *pp = (const char *)p;
+    return cp;
+}
+
+static int utf8_peek(const char *p)
+{
+    return *p ? utf8_next(&p) : 0;
+}
+
+/* Read a whole file; NULL when it cannot be opened. */
+static uint8_t *read_file(const char *path, size_t *out_size)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long len = ftell(f);
+    if (len <= 0) { fclose(f); return NULL; }
+    rewind(f);
+    uint8_t *data = malloc((size_t)len);
+    if (!data) { fclose(f); return NULL; }
+    size_t got = fread(data, 1, (size_t)len, f);
+    fclose(f);
+    if (got != (size_t)len) { free(data); return NULL; }
+    *out_size = (size_t)len;
+    return data;
+}
+
+static FontEntry *load_fallback_font(size_t i)
+{
+    if (s_fallback_state[i] == 1) return &s_fallback_fonts[i];
+    if (s_fallback_state[i] == -1) return NULL;
+    s_fallback_state[i] = -1;
+
+    const char *file = SYSTEM_FALLBACK_FILES[i];
+    uint8_t *data = NULL;
+    size_t size = 0;
+#ifdef _WIN32
+    const char *dirs[2] = { getenv("WINDIR"), getenv("LOCALAPPDATA") };
+    const char *subs[2] = { "\\Fonts\\", "\\Microsoft\\Windows\\Fonts\\" };
+    for (int d = 0; d < 2 && !data; d++) {
+        if (!dirs[d]) continue;
+        char path[1024];
+        snprintf(path, sizeof(path), "%s%s%s", dirs[d], subs[d], file);
+        data = read_file(path, &size);
+    }
+#else
+    data = read_file(file, &size);
+#endif
+    if (!data) return NULL;
+
+    /* .ttc collections: use the first face. */
+    int offset = stbtt_GetFontOffsetForIndex(data, 0);
+    FontEntry *fe = &s_fallback_fonts[i];
+    if (offset < 0 || !stbtt_InitFont(&fe->info, data, offset)) {
+        free(data);
+        return NULL;
+    }
+    fe->name = strdup(file);
+    fe->data = data;
+    fe->data_size = size;
+    fe->valid = true;
+    s_fallback_state[i] = 1;
+    return fe;
+}
+
+typedef struct {
+    FontEntry *fe;
+    int        glyph;     /* 0 = notdef in fe */
+} GlyphRef;
+
+/* The font that can draw `cp`: the requested font, another game font, or a
+   system fallback. Whitespace and control characters stay with the
+   requested font so their advances match its metrics. */
+static GlyphRef resolve_glyph(FontEntry *primary, int cp)
+{
+    GlyphRef r = { primary, stbtt_FindGlyphIndex(&primary->info, cp) };
+    if (r.glyph || cp <= 0x20 || cp == 0x3000 || cp == 0xA0) return r;
+
+    for (int i = 0; i < s_font_count; i++) {
+        FontEntry *fe = &s_fonts[i];
+        if (!fe->valid || fe == primary) continue;
+        int g = stbtt_FindGlyphIndex(&fe->info, cp);
+        if (g) { r.fe = fe; r.glyph = g; return r; }
+    }
+    for (size_t i = 0; i < SYSTEM_FALLBACK_COUNT; i++) {
+        FontEntry *fe = load_fallback_font(i);
+        if (!fe) continue;
+        int g = stbtt_FindGlyphIndex(&fe->info, cp);
+        if (g) { r.fe = fe; r.glyph = g; return r; }
+    }
+    return r;
+}
+
+/* Advance of `cp` at pixel_size, including kerning with next_cp when both
+   come from the same font. */
+static float glyph_advance(FontEntry *primary, float pixel_size, int cp, int next_cp, GlyphRef *out)
+{
+    GlyphRef g = resolve_glyph(primary, cp);
+    float scale = stbtt_ScaleForMappingEmToPixels(&g.fe->info, pixel_size);
+    int advance, lsb;
+    stbtt_GetGlyphHMetrics(&g.fe->info, g.glyph, &advance, &lsb);
+    float width = advance * scale;
+    if (next_cp) {
+        GlyphRef n = resolve_glyph(primary, next_cp);
+        if (n.fe == g.fe) {
+            width += stbtt_GetGlyphKernAdvance(&g.fe->info, g.glyph, n.glyph) * scale;
+        }
+    }
+    if (out) *out = g;
+    return width;
+}
+
 static float measure_text_internal(FontEntry *fe, float pixel_size, const char *text)
 {
     if (!fe || !text || !*text) return 0.0f;
 
-    float scale = stbtt_ScaleForMappingEmToPixels(&fe->info, pixel_size);
     float width = 0.0f;
-
     const char *p = text;
     while (*p) {
-        int codepoint;
-        if ((*p & 0x80) == 0) {
-            codepoint = *p++;
-        } else if ((*p & 0xE0) == 0xC0 && p[1]) {
-            codepoint = ((*p & 0x1F) << 6) | (p[1] & 0x3F);
-            p += 2;
-        } else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) {
-            codepoint = ((*p & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
-            p += 3;
-        } else if ((*p & 0xF8) == 0xF0 && p[1] && p[2] && p[3]) {
-            codepoint = ((*p & 0x07) << 18) | ((p[1] & 0x3F) << 12) |
-                        ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
-            p += 4;
-        } else {
-            codepoint = '?';
-            p++;
-        }
-
-        int advance, lsb;
-        stbtt_GetCodepointHMetrics(&fe->info, codepoint, &advance, &lsb);
-        width += advance * scale;
-
-        /* Kerning against the next codepoint. */
-        if (*p) {
-            int next_cp;
-            const char *peek = p;
-            if ((*peek & 0x80) == 0) {
-                next_cp = *peek;
-            } else if ((*peek & 0xE0) == 0xC0 && peek[1]) {
-                next_cp = ((*peek & 0x1F) << 6) | (peek[1] & 0x3F);
-            } else if ((*peek & 0xF0) == 0xE0 && peek[1] && peek[2]) {
-                next_cp = ((*peek & 0x0F) << 12) | ((peek[1] & 0x3F) << 6) | (peek[2] & 0x3F);
-            } else if ((*peek & 0xF8) == 0xF0 && peek[1] && peek[2] && peek[3]) {
-                next_cp = ((*peek & 0x07) << 18) | ((peek[1] & 0x3F) << 12) |
-                          ((peek[2] & 0x3F) << 6) | (peek[3] & 0x3F);
-            } else {
-                next_cp = '?';
-            }
-            width += stbtt_GetCodepointKernAdvance(&fe->info, codepoint, next_cp) * scale;
-        }
+        int codepoint = utf8_next(&p);
+        width += glyph_advance(fe, pixel_size, codepoint, utf8_peek(p), NULL);
     }
     return width;
 }
@@ -861,27 +985,14 @@ static void draw_text(Canvas2DCtx *ctx, const char *text, float x, float y,
     float cursor_x = x;
     const char *p = text;
     while (*p) {
-        int codepoint;
-        if ((*p & 0x80) == 0) {
-            codepoint = *p++;
-        } else if ((*p & 0xE0) == 0xC0 && p[1]) {
-            codepoint = ((*p & 0x1F) << 6) | (p[1] & 0x3F);
-            p += 2;
-        } else if ((*p & 0xF0) == 0xE0 && p[1] && p[2]) {
-            codepoint = ((*p & 0x0F) << 12) | ((p[1] & 0x3F) << 6) | (p[2] & 0x3F);
-            p += 3;
-        } else if ((*p & 0xF8) == 0xF0 && p[1] && p[2] && p[3]) {
-            codepoint = ((*p & 0x07) << 18) | ((p[1] & 0x3F) << 12) |
-                        ((p[2] & 0x3F) << 6) | (p[3] & 0x3F);
-            p += 4;
-        } else {
-            codepoint = '?';
-            p++;
-        }
+        int codepoint = utf8_next(&p);
+        GlyphRef g;
+        float advance = glyph_advance(fe, pixel_size, codepoint, utf8_peek(p), &g);
+        float gscale = stbtt_ScaleForMappingEmToPixels(&g.fe->info, pixel_size);
 
         int gw, gh, gx, gy;
-        uint8_t *bitmap = stbtt_GetCodepointBitmap(&fe->info, 0, scale,
-                                                    codepoint, &gw, &gh, &gx, &gy);
+        uint8_t *bitmap = stbtt_GetGlyphBitmap(&g.fe->info, 0, gscale,
+                                                g.glyph, &gw, &gh, &gx, &gy);
         if (bitmap && stroke_radius > 0.0f) {
             int margin = 0;
             uint8_t *fat = dilate_coverage(bitmap, gw, gh, stroke_radius, &margin);
@@ -916,27 +1027,7 @@ static void draw_text(Canvas2DCtx *ctx, const char *text, float x, float y,
             else stbtt_FreeBitmap(bitmap, NULL);
         }
 
-        int advance, lsb;
-        stbtt_GetCodepointHMetrics(&fe->info, codepoint, &advance, &lsb);
-        cursor_x += advance * scale;
-
-        if (*p) {
-            int next_cp;
-            const char *peek = p;
-            if ((*peek & 0x80) == 0) {
-                next_cp = *peek;
-            } else if ((*peek & 0xE0) == 0xC0 && peek[1]) {
-                next_cp = ((*peek & 0x1F) << 6) | (peek[1] & 0x3F);
-            } else if ((*peek & 0xF0) == 0xE0 && peek[1] && peek[2]) {
-                next_cp = ((*peek & 0x0F) << 12) | ((peek[1] & 0x3F) << 6) | (peek[2] & 0x3F);
-            } else if ((*peek & 0xF8) == 0xF0 && peek[1] && peek[2] && peek[3]) {
-                next_cp = ((*peek & 0x07) << 18) | ((peek[1] & 0x3F) << 12) |
-                          ((peek[2] & 0x3F) << 6) | (peek[3] & 0x3F);
-            } else {
-                next_cp = '?';
-            }
-            cursor_x += stbtt_GetCodepointKernAdvance(&fe->info, codepoint, next_cp) * scale;
-        }
+        cursor_x += advance;
     }
 }
 
