@@ -184,9 +184,26 @@
         var _origRequire = globalThis.require;
         globalThis.require = function(moduleName) {
             if (moduleName === "./greenworks" || moduleName === "greenworks") {
-                return {
+                var steamId = {
+                    screenName: "Player", steamId: "0", accountId: 0, staticAccountId: "0",
+                    isIndividualAccount: true, level: 0, getPersonaName: function() { return "Player"; }
+                };
+                var stub = {
+                    init: function() { return false; },
                     initAPI: function() { return false; },
-                    getSteamId: function() { return { screenName: "Player" }; },
+                    getSteamId: function() { return steamId; },
+                    getAppId: function() { return 0; },
+                    getAppBuildId: function() { return 0; },
+                    getNumberOfPlayers: function(cb) { if (typeof cb === "function") cb(0); return 0; },
+                    getAchievementNames: function() { return []; },
+                    indicateAchievementProgress: function() { return false; },
+                    isSteamInBigPictureMode: function() { return false; },
+                    getCloudQuota: function(cb) { if (typeof cb === "function") cb(0, 0); },
+                    getFriends: function() { return []; },
+                    getFriendCount: function() { return 0; },
+                    isSubscribedApp: function() { return false; },
+                    getCurrentUILanguage: function() { return "english"; },
+                    getCurrentGameLanguage: function() { return "english"; },
                     isSteamRunning: function() { return false; },
                     activateAchievement: function() {},
                     getAchievement: function() { return false; },
@@ -206,11 +223,23 @@
                     isSubscribedApp: function() { return false; },
                     isCloudEnabled: function() { return false; },
                     isCloudEnabledForUser: function() { return false; },
-                    getCurrentUILanguage: function() { return "english"; },
-                    getCurrentGameLanguage: function() { return "english"; },
                     FriendFlags: { Immediate: 0 },
-                    getFriendCount: function() { return 0; }
+                    UGCMatchingType: {}, UGCQueryType: {}, UserUGCList: {}, UserUGCListSortOrder: {}
                 };
+                /* Anything else Greenworks offers (stats, UGC, cloud files):
+                   a function that reports failure, so plugins written for
+                   Steam degrade instead of throwing "not a function". */
+                if (typeof Proxy === "function") {
+                    var noop = function() { return false; };
+                    stub = new Proxy(stub, {
+                        get: function(target, prop) {
+                            if (prop in target) return target[prop];
+                            if (typeof prop === "symbol" || prop === "then") return undefined;
+                            return noop;
+                        }
+                    });
+                }
+                return stub;
             }
             return _origRequire(moduleName);
         };

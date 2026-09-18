@@ -376,6 +376,88 @@
         return new AudioBufferSourceNode(this);
     };
 
+    /* ---- Pass-through effect nodes ----
+       Audio plugins insert compressors, filters and analysers between the
+       source and the destination. The native mixer has no such stages, so
+       these nodes keep their parameters and simply forward the connection;
+       the chain walk in AudioBufferSourceNode.start skips them. */
+    function passThroughNode(ctx, params, extra) {
+        var node = new AudioNode();
+        node.context = ctx;
+        for (var name in params) {
+            node[name] = new AudioParam(params[name]);
+            node[name]._owner = node;
+            node[name]._paramName = name;
+        }
+        for (var key in extra) node[key] = extra[key];
+        return node;
+    }
+
+    AudioContext.prototype.createDynamicsCompressor = function() {
+        return passThroughNode(this, { threshold: -24, knee: 30, ratio: 12, attack: 0.003, release: 0.25 },
+                               { reduction: 0 });
+    };
+
+    AudioContext.prototype.createBiquadFilter = function() {
+        return passThroughNode(this, { frequency: 350, detune: 0, Q: 1, gain: 0 }, {
+            type: "lowpass",
+            getFrequencyResponse: function(freqs, mag, phase) {
+                for (var i = 0; i < freqs.length; i++) { mag[i] = 1; phase[i] = 0; }
+            }
+        });
+    };
+
+    AudioContext.prototype.createDelay = function(maxDelayTime) {
+        return passThroughNode(this, { delayTime: 0 }, { maxDelayTime: maxDelayTime || 1 });
+    };
+
+    AudioContext.prototype.createConvolver = function() {
+        return passThroughNode(this, {}, { buffer: null, normalize: true });
+    };
+
+    AudioContext.prototype.createWaveShaper = function() {
+        return passThroughNode(this, {}, { curve: null, oversample: "none" });
+    };
+
+    AudioContext.prototype.createChannelSplitter = function(count) {
+        var node = passThroughNode(this, {}, {});
+        node.numberOfOutputs = count || 6;
+        return node;
+    };
+
+    AudioContext.prototype.createChannelMerger = function(count) {
+        var node = passThroughNode(this, {}, {});
+        node.numberOfInputs = count || 6;
+        return node;
+    };
+
+    AudioContext.prototype.createAnalyser = function() {
+        var node = passThroughNode(this, {}, {
+            fftSize: 2048, frequencyBinCount: 1024, minDecibels: -100, maxDecibels: -30,
+            smoothingTimeConstant: 0.8
+        });
+        var zero = function(array) { for (var i = 0; i < array.length; i++) array[i] = 0; };
+        var mid = function(array) { for (var i = 0; i < array.length; i++) array[i] = 128; };
+        node.getByteFrequencyData = zero;
+        node.getFloatFrequencyData = function(array) { for (var i = 0; i < array.length; i++) array[i] = -100; };
+        node.getByteTimeDomainData = mid;
+        node.getFloatTimeDomainData = zero;
+        return node;
+    };
+
+    /* StereoPannerNode: a PannerNode driven by a `pan` AudioParam, so the
+       source's chain walk picks up the pan like the positional panner. */
+    AudioContext.prototype.createStereoPanner = function() {
+        var node = new PannerNode(this);
+        node.pan = new AudioParam(0);
+        node.pan._owner = node;
+        node.pan._paramName = "pan";
+        node._applyParam = function(name, value) {
+            if (name === "pan") this.setPosition(value, 0, 1 - Math.abs(value));
+        };
+        return node;
+    };
+
     AudioContext.prototype.decodeAudioData = function(arrayBuffer, successCallback, errorCallback) {
         var self = this;
         var promise = new Promise(function(resolve, reject) {
