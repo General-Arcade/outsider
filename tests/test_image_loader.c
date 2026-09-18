@@ -62,6 +62,7 @@ static int tests_failed = 0;
 
 static const char *TEST_PNG_4x4 = "tests/fixtures/test_4x4.png";
 static const char *TEST_PNG_8x2 = "tests/fixtures/test_8x2.png";
+static const char *TEST_JPEG_6x4 = "tests/fixtures/test_6x4.jpg";
 
 /* C-level image loader tests */
 
@@ -69,6 +70,26 @@ TEST(init_shutdown)
 {
     image_loader_init(false);
     ASSERT_EQ_UINT(image_cache_count(), 0);
+    image_loader_shutdown();
+}
+
+TEST(load_jpeg_by_content)
+{
+    /* Browsers decode by content, not by file name, and games do ship JPEG
+       data under a .png name; the loader must accept both. */
+    image_loader_init(false);
+    ImageHandle h = image_load(TEST_JPEG_6x4);
+    ASSERT(h != IMAGE_HANDLE_INVALID);
+    ImageInfo info;
+    ASSERT(image_get_info(h, &info));
+    ASSERT_EQ_INT(info.width, 6);
+    ASSERT_EQ_INT(info.height, 4);
+    const uint8_t *px = image_get_pixels(h);
+    ASSERT(px != NULL);
+    /* Left half red, right half blue (JPEG is lossy, so allow a wide band). */
+    ASSERT(px[0] > 180 && px[2] < 80);
+    const uint8_t *right = px + 4 * 4;
+    ASSERT(right[2] > 180 && right[0] < 80);
     image_loader_shutdown();
 }
 
@@ -658,6 +679,7 @@ int main(void)
     printf("-- C-level tests --\n");
     RUN(init_shutdown);
     RUN(load_png_4x4);
+    RUN(load_jpeg_by_content);
     RUN(load_png_8x2);
     RUN(load_nonexistent_returns_invalid);
     RUN(load_null_path_returns_invalid);

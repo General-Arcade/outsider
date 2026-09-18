@@ -13,7 +13,10 @@
 
 /* stb_image implementation lives in this translation unit. */
 #define STB_IMAGE_IMPLEMENTATION
+/* Browsers decode by content, not extension: games ship JPEG data under
+   .png names now and then (Pocket Mirror's perlinNoise.png). */
 #define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
 #define STBI_NO_STDIO   /* We handle file I/O ourselves. */
 #include "stb_image.h"
 

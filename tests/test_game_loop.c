@@ -216,6 +216,58 @@ TEST(parse_plugins_real_format)
 
 /* Load Order Tests */
 
+TEST(plugin_names_with_subfolders)
+{
+    /* A plugin name is a path under js/plugins/, so a game may group its
+       plugins in folders ("Pocket/Pocket_Mirror_BASE"). Only names that
+       would escape that folder are rejected. */
+    char game_dir[512];
+    snprintf(game_dir, sizeof(game_dir), "%s/game_subfolder_plugins", TEST_DIR);
+    file_io_mkdir(game_dir);
+
+    char js_dir[512];
+    snprintf(js_dir, sizeof(js_dir), "%s/js", game_dir);
+    file_io_mkdir(js_dir);
+    char plugins_dir[512];
+    snprintf(plugins_dir, sizeof(plugins_dir), "%s/js/plugins", game_dir);
+    file_io_mkdir(plugins_dir);
+    char sub_dir[512];
+    snprintf(sub_dir, sizeof(sub_dir), "%s/js/plugins/Sub", game_dir);
+    file_io_mkdir(sub_dir);
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/js/plugins/Sub/Nested.js", game_dir);
+    file_io_write_text(path, "var nested_loaded = true;\n");
+    snprintf(path, sizeof(path), "%s/js/plugins/Flat.js", game_dir);
+    file_io_write_text(path, "var flat_loaded = true;\n");
+    snprintf(path, sizeof(path), "%s/js/plugins.js", game_dir);
+    file_io_write_text(path,
+        "var $plugins = [\n"
+        "  {\"name\":\"Sub/Nested\",\"status\":true,\"description\":\"\",\"parameters\":{}},\n"
+        "  {\"name\":\"Flat\",\"status\":true,\"description\":\"\",\"parameters\":{}},\n"
+        "  {\"name\":\"../Escape\",\"status\":true,\"description\":\"\",\"parameters\":{}}\n"
+        "];\n");
+
+    size_t count = 0;
+    char **order = script_loader_get_load_order("src/shims", game_dir, &count);
+    ASSERT(order != NULL);
+
+    bool has_nested = false, has_flat = false, has_escape = false;
+    for (size_t i = 0; i < count; i++) {
+        if (strstr(order[i], "Sub/Nested.js")) has_nested = true;
+        if (strstr(order[i], "Flat.js")) has_flat = true;
+        if (strstr(order[i], "Escape")) has_escape = true;
+    }
+    script_loader_free_path_list(order, count);
+
+    ASSERT(has_nested);
+    ASSERT(has_flat);
+    ASSERT(!has_escape);
+    PASS();
+}
+
+
+
 TEST(load_order_without_plugins)
 {
     char game_dir[512];
@@ -1109,6 +1161,7 @@ int main(void)
     run_parse_plugins_real_format();
 
     printf("\n-- Load Order --\n");
+    run_plugin_names_with_subfolders();
     run_load_order_without_plugins();
     run_load_order_with_plugins();
     run_load_order_shims_first();
