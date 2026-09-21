@@ -2,12 +2,12 @@
 
 Outsider is a native, browser-free runtime for RPG Maker MZ games. The game's original
 JavaScript runs unmodified inside [QuickJS](https://github.com/quickjs-ng/quickjs),
-with windowing and input from SDL3, rendering through OpenGL, and audio through
-SoLoud. No NW.js, no Chromium, no Node.
+with windowing and input from SDL3, rendering through the GPU (Metal, Vulkan or
+D3D12), and audio through SoLoud. No NW.js, no Chromium, no Node.
 
 The result is a small executable (a few megabytes instead of a couple hundred)
 that starts instantly, uses far less memory than the stock NW.js player, and
-runs on Linux and Windows from the same source tree.
+runs on Linux, Windows and macOS from the same source tree.
 
 ## Features
 
@@ -165,9 +165,14 @@ The runtime renders through SDL3's GPU API by default, with the original
 OpenGL 4.5 path kept as a fallback:
 
 ```bash
-cmake -B build                             # SDL3 GPU: D3D12 or Vulkan (default)
+cmake -B build                             # SDL3 GPU: D3D12, Vulkan or Metal (default)
 cmake -B build -DRMMZ_RENDER_BACKEND=gl    # OpenGL 4.5 fallback
 ```
+
+The fallback is Linux and Windows only: it is built on OpenGL 4.5 direct state
+access and Apple's OpenGL stops at 4.1, so macOS takes the GPU backend and
+configuring `gl` there fails with that message rather than building something
+that cannot run.
 
 Both produce the same image. `tools/compare_backends.py` runs a scenario
 through two builds and diffs the screenshots; across Look Outside, Saihate
@@ -318,7 +323,7 @@ starts.
 src/
   main.c                  Entry point, argument parsing, subsystem init
   platform/
-    platform_sdl2.c       Window, OpenGL context, events, gamepads
+    platform_sdl3.c       Window, graphics device, events, gamepads
     win_console.c         Windows stdout/stderr handling and error dialogs
   engine/
     js_engine.c           QuickJS runtime, console, promise jobs, bytecode cache
