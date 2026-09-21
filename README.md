@@ -18,7 +18,8 @@ runs on Linux, Windows and macOS from the same source tree.
   fullscreen, timers and `requestAnimationFrame` are provided in JavaScript
   and backed by native C.
 - **GPU rendering.** Sprite batching, render targets, blend modes, tilemap
-  layers and PIXI filters (ColorMatrix, Blur, Alpha) on OpenGL 4.5.
+  layers and PIXI filters (ColorMatrix, Blur, Alpha) through SDL3's GPU API —
+  Metal, Vulkan or D3D12 — with an OpenGL 4.5 path kept as a fallback.
 - **Software Canvas 2D** for `Bitmap` operations (text, gradients, paths,
   transforms) with TrueType text via stb_truetype, including per-glyph
   fallback to the game's other fonts and then to system fonts, so text in a
@@ -79,6 +80,12 @@ step list; `tools/evaluator/scenarios/pocket-mirror.json` is one, for a game
 that shows a splash and a language screen before the title and animates its
 menus into place.
 
+That comparison needs the game's own NW.js player, which these Steam builds
+ship as a Windows executable, so it runs there. All six games were also played
+through the same scenario on macOS (Apple Silicon, Metal) with every scene
+rendering correctly, including the run-time-compiled plugin shaders Pocket
+Mirror brings.
+
 ## How It Works
 
 ```
@@ -97,11 +104,31 @@ files, plugins, then `main.js`. Every browser object the engine touches is
 either implemented in a shim or forwarded to a native function registered
 under a `__native_*` name.
 
+## Platforms
+
+| | Graphics | Compiler | Notes |
+|---|---|---|---|
+| **Windows** 10/11 x64 | D3D12 | Visual Studio 2022 (MSVC) | GUI subsystem; the app manifest sets UTF-8 and per-monitor DPI |
+| **Linux** | Vulkan | GCC or Clang | X11 and Wayland |
+| **macOS** (Apple Silicon and Intel) | Metal | Apple Clang (Xcode command line tools) | No OpenGL fallback — see below |
+
+Nothing beyond the platform's own graphics stack has to be installed or
+shipped: SDL reaches the Vulkan loader and `d3d12.dll`/`dxgi.dll` at run time,
+and Metal is part of macOS.
+
+The OpenGL 4.5 fallback is a Windows and Linux option. macOS has none: that
+path is built on direct state access and Apple stops at 4.1, so
+`-DRMMZ_RENDER_BACKEND=gl` fails at CMake time there rather than building a
+runtime that cannot start. macOS builds also target the SDK of the machine
+they are built on; set `CMAKE_OSX_DEPLOYMENT_TARGET` to support older releases
+(SDL3 itself deploys back to macOS 10.13).
+
 ## Requirements
 
 - CMake 3.20 or newer
 - A C17 and C++ compiler: GCC, Clang, or Visual Studio 2022
-- OpenGL 4.5 capable GPU and driver (direct state access is used throughout)
+- A GPU and driver for the platform's backend above; OpenGL 4.5 with direct
+  state access instead when building `-DRMMZ_RENDER_BACKEND=gl`
 - Python 3.8+ for the packaging tools
 - `ffmpeg` on `PATH` (or in `RMMZ_FFMPEG`), only if the game ships M4A
   audio or movies
@@ -111,13 +138,18 @@ stb_image and stb_truetype are vendored under `third_party/stb`.
 
 ## Building
 
-### Linux / macOS-style shells
+### Linux and macOS
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build
 ```
+
+On macOS the Xcode command line tools (`xcode-select --install`) are enough;
+the full Xcode app is not needed. `cmake --install` places a plain executable
+next to the game folder, the same layout as the other platforms — it does not
+build a `.app` bundle.
 
 ### Windows (Visual Studio 2022)
 
@@ -169,15 +201,14 @@ cmake -B build                             # SDL3 GPU: D3D12, Vulkan or Metal (d
 cmake -B build -DRMMZ_RENDER_BACKEND=gl    # OpenGL 4.5 fallback
 ```
 
-The fallback is Linux and Windows only: it is built on OpenGL 4.5 direct state
-access and Apple's OpenGL stops at 4.1, so macOS takes the GPU backend and
-configuring `gl` there fails with that message rather than building something
-that cannot run.
+The fallback is Linux and Windows only (see [Platforms](#platforms)).
 
 Both produce the same image. `tools/compare_backends.py` runs a scenario
 through two builds and diffs the screenshots; across Look Outside, Saihate
 Station, Aquarium and DRAPLINE every shot is pixel-identical, filters, masks,
-render textures and the HTML overlay included.
+render textures and the HTML overlay included. It needs two backends, so it is
+a Linux and Windows check; on macOS run a scenario through the one build and
+read the shots.
 
 The GPU backend keeps `renderer.h`, `sprite_batch.h` and `filters.h`
 unchanged, so the shims, bindings and tests are shared. Three things follow
@@ -332,14 +363,20 @@ src/
     error_handler.c       Structured logging, JS exception reporting
   io/file_io.c            Portable file system access rooted at the game dir
   rendering/
-    gl_loader.c           Runtime OpenGL entry point loading
-    renderer.c            Frame orchestration, render targets, blend state
-    sprite_batch.c        Quad batching (VAO/VBO, texture sorting)
+    gpu_backend.c         SDL3 GPU device, pipelines, deferred command list
+    renderer_gpu.c        Frame orchestration, render targets, blend state
+    sprite_batch_gpu.c    Quad batching into the vertex arena
+    filters_gpu.c         PIXI filters as GPU pipelines
+    glsl_translate.c      WebGL 1 GLSL -> GLSL 450 rewriting
+    gpu_shader_runtime.c  Compiling rewritten shaders via SDL_shadercross
+    gl_loader.c           gl backend: runtime OpenGL entry point loading
+    renderer.c            gl backend: frame orchestration, render targets
+    sprite_batch.c        gl backend: quad batching (VAO/VBO, texture sorting)
+    filters.c             gl backend: PIXI filters as GLSL programs
     canvas2d.c            Software Canvas 2D rasteriser
     font_manager.c        TrueType loading and glyph caching
     image_loader.c        PNG/JPEG decoding and texture cache
     tilemap.c             Tilemap layer rendering (autotiles, animation)
-    filters.c             GLSL implementations of PIXI filters
   audio/audio_engine.cpp  SoLoud wrapper with four mix buses
   effects/effekseer_backend.cpp
   input/input_manager.c   SDL events -> DOM keyboard/mouse/gamepad state
