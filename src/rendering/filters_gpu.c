@@ -173,7 +173,7 @@ void filter_begin(uint32_t program, uint32_t input_texture, int width, int heigh
     s_current.shader = (int)program;
     s_current.textures[0] = input_texture;
     s_current.texture_count = 1;
-    s_current.layout = (const GlslTranslation *)gpu_runtime_shader_layout(program);
+    s_current.layout = gpu_runtime_shader_layout(program);
     /* Set before the filter's own uniforms, so anything it names itself wins. */
     supply_pixi_uniforms(width, height);
 }

@@ -43,7 +43,9 @@ typedef struct {
     bool     integer;
 } GlslUniform;
 
-typedef struct {
+/* Tagged so gpu_backend.h can forward-declare it without pulling in this
+   header; an anonymous struct there would be a second, unrelated type. */
+typedef struct GlslTranslation {
     /* Translated GLSL 450 source, owned by this struct. */
     char       *source;
 
