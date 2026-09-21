@@ -58,7 +58,16 @@ static inline const char *test_tmp_root(void)
 #else
     const char *env = getenv("TMPDIR");
     if (!env || env[0] == '\0') env = "/tmp";
-    snprintf(root, sizeof(root), "%s", env);
+    /* Canonicalise: macOS hands out a TMPDIR under /var, itself a symlink to
+       /private/var, and file_io resolves the game root with realpath(). Paths
+       built here are compared against that, so resolve the symlinks too. */
+    char *real = realpath(env, NULL);
+    if (real) {
+        snprintf(root, sizeof(root), "%s", real);
+        free(real);
+    } else {
+        snprintf(root, sizeof(root), "%s", env);
+    }
 #endif
 
     size_t len = strlen(root);

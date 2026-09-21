@@ -57,10 +57,27 @@ static int _tests_failed = 0;
 #ifdef _WIN32
 #define FONT_PATH "C:/Windows/Fonts/arial.ttf"
 #define FONT_MONO_PATH "C:/Windows/Fonts/consola.ttf"
+#elif defined(__APPLE__)
+#define FONT_PATH "/System/Library/Fonts/Supplemental/Arial.ttf"
+#define FONT_MONO_PATH "/System/Library/Fonts/Supplemental/Courier New.ttf"
 #else
 #define FONT_PATH "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 #define FONT_MONO_PATH "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 #endif
+
+/* The C-level tests skip themselves when load_font_data() comes back empty;
+   the JS ones pass the path into the engine, so they check here instead. */
+static int font_file_present(void)
+{
+    FILE *f = fopen(FONT_PATH, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+#define SKIP_WITHOUT_FONT() do { \
+    if (!font_file_present()) { printf("SKIP (no font file) "); return; } \
+} while (0)
 
 static uint8_t *load_font_data(const char *path, size_t *out_size)
 {
@@ -482,6 +499,7 @@ TEST(test_js_font_count_empty)
 
 TEST(test_js_load_font_file)
 {
+    SKIP_WITHOUT_FONT();
     js_setup();
     ASSERT(js_eval_bool(
         "var ok = __native_font.loadFontFile('JsFont', '" FONT_PATH "');"
@@ -502,6 +520,7 @@ TEST(test_js_load_nonexistent)
 
 TEST(test_js_get_metrics)
 {
+    SKIP_WITHOUT_FONT();
     js_setup();
     ASSERT(js_eval_bool(
         "__native_font.loadFontFile('MetricJs', '" FONT_PATH "');"
@@ -523,6 +542,7 @@ TEST(test_js_get_metrics_missing_font)
 
 TEST(test_js_measure_text)
 {
+    SKIP_WITHOUT_FONT();
     js_setup();
     ASSERT(js_eval_bool(
         "__native_font.loadFontFile('MeasureJs', '" FONT_PATH "');"
@@ -534,6 +554,7 @@ TEST(test_js_measure_text)
 
 TEST(test_js_font_names)
 {
+    SKIP_WITHOUT_FONT();
     js_setup();
     ASSERT(js_eval_bool(
         "__native_font.loadFontFile('Alpha', '" FONT_PATH "');"
@@ -571,6 +592,7 @@ TEST(test_shim_fontface_constructor)
 
 TEST(test_shim_fontface_load_url)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff = new FontFace('ShimFont', 'url(\"" FONT_PATH "\")');"
@@ -581,6 +603,7 @@ TEST(test_shim_fontface_load_url)
 
 TEST(test_shim_fontface_load_direct_path)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff = new FontFace('DirectFont', 'url(" FONT_PATH ")');"
@@ -601,6 +624,7 @@ TEST(test_shim_fontface_load_failure)
 
 TEST(test_shim_fontfaceset_add_check)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff = new FontFace('CheckFont', 'url(\"" FONT_PATH "\")');"
@@ -612,6 +636,7 @@ TEST(test_shim_fontfaceset_add_check)
 
 TEST(test_shim_fontfaceset_ready)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff = new FontFace('ReadyFont', 'url(\"" FONT_PATH "\")');"
@@ -623,6 +648,7 @@ TEST(test_shim_fontfaceset_ready)
 
 TEST(test_shim_fontfaceset_foreach)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff1 = new FontFace('ForEachA', 'url(\"" FONT_PATH "\")');"
@@ -638,6 +664,7 @@ TEST(test_shim_fontfaceset_foreach)
 
 TEST(test_shim_fontfaceset_delete)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff = new FontFace('DelFont', 'url(\"" FONT_PATH "\")');"
@@ -651,6 +678,7 @@ TEST(test_shim_fontfaceset_delete)
 
 TEST(test_shim_canvas2d_with_font)
 {
+    SKIP_WITHOUT_FONT();
     js_setup_with_shims();
     ASSERT(js_eval_bool(
         "var ff = new FontFace('CanvasFont', 'url(\"" FONT_PATH "\")');"
