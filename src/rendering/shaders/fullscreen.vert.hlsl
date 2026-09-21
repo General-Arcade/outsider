@@ -1,5 +1,5 @@
 // Copyright (c) 2026 General Arcade (Pte. Ltd.)
-// SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+// SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
 //
 // Passthrough vertex shader for filter passes. Mirrors DEFAULT_VERT_SRC in
 // filters.c: positions already sit in clip space.

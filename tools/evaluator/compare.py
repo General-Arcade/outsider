@@ -1,5 +1,5 @@
 # Copyright (c) 2026 General Arcade (Pte. Ltd.)
-# SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+# SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
 """Screenshot comparison (Pillow only, no numpy).
 
 compare_images() returns per-pair metrics plus a mask of changed pixels;

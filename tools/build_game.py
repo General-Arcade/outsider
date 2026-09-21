@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 General Arcade (Pte. Ltd.)
-# SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+# SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
 """Build pipeline for Outsider, the RPG Maker MZ native runtime.
 
 Orchestrates the full build process:

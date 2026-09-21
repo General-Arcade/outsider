@@ -1,5 +1,5 @@
 # Copyright (c) 2026 General Arcade (Pte. Ltd.)
-# SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+# SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
 """Scenario steps and the runner that plays them on one driver.
 
 A scenario is a JSON file: {"name": ..., "steps": [step, ...]}. Each step is

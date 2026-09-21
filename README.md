@@ -434,9 +434,9 @@ iterating on the runtime.
 Outsider is developed by [General Arcade](https://generalarcade.com). Written by Gennadii Potapov;
 see [AUTHORS](AUTHORS).
 
-Dual-licensed: [GPLv2](LICENSES/GPL-2.0.txt) for free and open source use,
-or a [commercial license](LICENSES/COMMERCIAL.md) from General Arcade for
-proprietary and commercial projects (contact@generalarcade.com). See
-[LICENSE](LICENSE).
+Dual-licensed: [GPLv3 or later](LICENSES/GPL-3.0.txt) for free and open
+source use, or a [commercial license](LICENSES/COMMERCIAL.md) from General
+Arcade for proprietary and commercial projects (contact@generalarcade.com).
+See [LICENSE](LICENSE).
 
 Contributions are welcome under the terms in [CONTRIBUTING.md](CONTRIBUTING.md).

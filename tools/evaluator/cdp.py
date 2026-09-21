@@ -1,5 +1,5 @@
 # Copyright (c) 2026 General Arcade (Pte. Ltd.)
-# SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+# SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
 """Minimal Chrome DevTools Protocol client (no third-party dependencies).
 
 NW.js (and any Chromium) started with --remote-debugging-port=N serves a

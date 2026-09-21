@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2026 General Arcade (Pte. Ltd.)
- * SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+ * SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
  */
 
 /* Effekseer backend. With RMMZ_HAS_EFFEKSEER defined this wraps the Effekseer

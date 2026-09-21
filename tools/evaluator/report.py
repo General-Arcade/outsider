@@ -1,5 +1,5 @@
 # Copyright (c) 2026 General Arcade (Pte. Ltd.)
-# SPDX-License-Identifier: GPL-2.0-only OR LicenseRef-GeneralArcade-Commercial
+# SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-GeneralArcade-Commercial
 """report.json / report.html / console summary for one evaluator run."""
 
 import html
