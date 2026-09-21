@@ -1,8 +1,24 @@
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    set(RMMZ_TEST_PLATFORM_RENDER_SOURCES
+        ${CMAKE_SOURCE_DIR}/src/rendering/gpu_backend.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/glsl_translate.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/gpu_shader_runtime.c
+    )
+else()
+    set(RMMZ_TEST_PLATFORM_RENDER_SOURCES
+        ${CMAKE_SOURCE_DIR}/src/rendering/gl_loader.c
+    )
+endif()
+
+# Window, input and the graphics context platform_init() brings up. Built
+# against the selected backend: platform_sdl3.c creates a GL context for the
+# gl backend and a GPU device for the gpu one, and macOS caps OpenGL at 4.1,
+# so a GL build of this test could never pass there.
 add_executable(test_platform
     test_platform.c
     ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl3.c
-    ${CMAKE_SOURCE_DIR}/src/rendering/gl_loader.c
     ${CMAKE_SOURCE_DIR}/src/input/input_manager.c
+    ${RMMZ_TEST_PLATFORM_RENDER_SOURCES}
 )
 
 target_include_directories(test_platform PRIVATE
@@ -12,7 +28,17 @@ target_include_directories(test_platform PRIVATE
 target_link_libraries(test_platform PRIVATE
     SDL3::SDL3
     OpenGL::GL
+    ${RMMZ_SYS_LIBS}
 )
+
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    target_compile_definitions(test_platform PRIVATE RMMZ_RENDER_GPU)
+    if(RMMZ_RUNTIME_SHADERS)
+        target_compile_definitions(test_platform PRIVATE RMMZ_RUNTIME_SHADERS)
+        target_link_libraries(test_platform PRIVATE
+            sdl_shadercross glslang SPIRV glslang-default-resource-limits)
+    endif()
+endif()
 
 add_test(NAME platform COMMAND test_platform)
 
@@ -474,15 +500,17 @@ target_link_libraries(test_plugins PRIVATE
 add_test(NAME plugins COMMAND test_plugins WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 # Display tests (fullscreen, resize, scaling — needs SDL3 + OpenGL + QuickJS + platform bindings)
+# Also brings up a real window through platform_init(), so it follows the
+# selected backend for the same reason test_platform does.
 add_executable(test_display
     test_display.c
     ${CMAKE_SOURCE_DIR}/src/platform/platform_sdl3.c
-    ${CMAKE_SOURCE_DIR}/src/rendering/gl_loader.c
     ${CMAKE_SOURCE_DIR}/src/input/input_manager.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_platform.c
     ${CMAKE_SOURCE_DIR}/src/bindings/bind_io.c
     ${CMAKE_SOURCE_DIR}/src/io/file_io.c
     ${CMAKE_SOURCE_DIR}/src/engine/js_engine.c
+    ${RMMZ_TEST_PLATFORM_RENDER_SOURCES}
 )
 
 target_include_directories(test_display PRIVATE
@@ -493,7 +521,17 @@ target_link_libraries(test_display PRIVATE
     SDL3::SDL3
     OpenGL::GL
     qjs
+    ${RMMZ_SYS_LIBS}
 )
+
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    target_compile_definitions(test_display PRIVATE RMMZ_RENDER_GPU)
+    if(RMMZ_RUNTIME_SHADERS)
+        target_compile_definitions(test_display PRIVATE RMMZ_RUNTIME_SHADERS)
+        target_link_libraries(test_display PRIVATE
+            sdl_shadercross glslang SPIRV glslang-default-resource-limits)
+    endif()
+endif()
 
 # Run from project root for shim file paths
 add_test(NAME display COMMAND test_display WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

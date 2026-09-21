@@ -4,9 +4,14 @@
  */
 
 #include "platform/platform.h"
+#ifdef RMMZ_RENDER_GPU
+#include "rendering/gpu_backend.h"
+#endif
 
 #include <SDL3/SDL.h>
+#ifndef RMMZ_RENDER_GPU
 #include <SDL3/SDL_opengl.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -51,6 +56,13 @@ static void test_platform_init_shutdown(void)
         PASS();
     }
 
+#ifdef RMMZ_RENDER_GPU
+    TEST(gpu_device_valid);
+    /* platform_init() only returns non-NULL once gpu_backend_init() has
+       claimed a device, so reaching here means one was created. */
+    printf("PASS (GPU: %s)\n", SDL_GetGPUDeviceDriver(gpu_backend_device()));
+    tests_passed++;
+#else
     TEST(opengl_context_valid);
     /* If we can call glGetString without segfault, the GL context is valid. */
     const GLubyte *vendor = glGetString(GL_VENDOR);
@@ -73,6 +85,7 @@ static void test_platform_init_shutdown(void)
     } else {
         PASS();
     }
+#endif
 
     TEST(platform_swap_buffers);
     platform_swap_buffers(p);

@@ -12,7 +12,9 @@
 #include "bindings/bind_io.h"
 
 #include <SDL3/SDL.h>
+#ifndef RMMZ_RENDER_GPU
 #include <SDL3/SDL_opengl.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
