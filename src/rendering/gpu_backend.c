@@ -193,12 +193,14 @@ static SDL_GPUShader *load_shader(const char *name, int sampler_count,
             info.code = b->msl;
             info.code_size = b->msl_size;
             info.format = SDL_GPU_SHADERFORMAT_MSL;
+            /* "main" is reserved in MSL, so SPIRV-Cross emits "main0". */
+            info.entrypoint = "main0";
         } else {
             fprintf(stderr, "gpu: no shader format for %s "
                     "(device accepts 0x%x)\n", name, (unsigned)have);
             return NULL;
         }
-        info.entrypoint = "main";
+        if (!info.entrypoint) info.entrypoint = "main";
         info.stage = b->is_vertex ? SDL_GPU_SHADERSTAGE_VERTEX
                                   : SDL_GPU_SHADERSTAGE_FRAGMENT;
         info.num_samplers = (Uint32)sampler_count;
