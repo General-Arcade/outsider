@@ -387,15 +387,17 @@ bool gpu_backend_init(SDL_Window *window)
         fprintf(stderr, "gpu: SDL_CreateGPUDevice failed: %s\n", SDL_GetError());
         return false;
     }
-    if (!SDL_ClaimWindowForGPUDevice(G.device, window)) {
-        fprintf(stderr, "gpu: SDL_ClaimWindowForGPUDevice failed: %s\n", SDL_GetError());
-        SDL_DestroyGPUDevice(G.device);
-        G.device = NULL;
-        return false;
+    if (window) {
+        if (!SDL_ClaimWindowForGPUDevice(G.device, window)) {
+            fprintf(stderr, "gpu: SDL_ClaimWindowForGPUDevice failed: %s\n", SDL_GetError());
+            SDL_DestroyGPUDevice(G.device);
+            G.device = NULL;
+            return false;
+        }
+        SDL_SetGPUSwapchainParameters(G.device, window,
+                                      SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
+                                      SDL_GPU_PRESENTMODE_VSYNC);
     }
-    SDL_SetGPUSwapchainParameters(G.device, window,
-                                  SDL_GPU_SWAPCHAINCOMPOSITION_SDR,
-                                  SDL_GPU_PRESENTMODE_VSYNC);
 
     if (!create_shaders()) {
         gpu_backend_shutdown();
@@ -707,8 +709,8 @@ static void flush_uploads(void)
 
 static void ensure_screen_texture(void)
 {
-    int w = 0, h = 0;
-    SDL_GetWindowSizeInPixels(G.window, &w, &h);
+    int w = G.screen_w, h = G.screen_h;
+    if (G.window) SDL_GetWindowSizeInPixels(G.window, &w, &h);
     if (w <= 0) w = 1;
     if (h <= 0) h = 1;
     if (G.screen && G.screen_w == w && G.screen_h == h) return;
@@ -733,8 +735,12 @@ static void ensure_screen_texture(void)
 
 void gpu_frame_resize(int width, int height)
 {
-    (void)width; (void)height;
-    if (G.ready) ensure_screen_texture();
+    if (!G.ready) return;
+    if (!G.window && width > 0 && height > 0) {
+        G.screen_w = width;
+        G.screen_h = height;
+    }
+    ensure_screen_texture();
 }
 
 void gpu_screen_size(int *w, int *h)
@@ -1205,6 +1211,9 @@ void gpu_frame_present(void)
 {
     if (!G.ready) return;
     gpu_submit();
+    /* Windowless: the frame lives in the offscreen surface, which is where
+       readbacks look anyway. */
+    if (!G.window) return;
 
     SDL_GPUCommandBuffer *cb = SDL_AcquireGPUCommandBuffer(G.device);
     if (!cb) return;

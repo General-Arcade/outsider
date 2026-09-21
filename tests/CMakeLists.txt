@@ -636,3 +636,28 @@ add_executable(test_glsl_translate
 target_include_directories(test_glsl_translate PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(test_glsl_translate PRIVATE ${RMMZ_SYS_LIBS})
 add_test(NAME glsl_translate COMMAND test_glsl_translate)
+
+# GPU renderer tests. These need the real GPU backend rather than the headless
+# stubs every other test builds, so they only exist when it is the selected
+# backend; they run without a window and skip themselves where no device
+# exists.
+if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
+    add_executable(test_gpu_render
+        test_gpu_render.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/gpu_backend.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/sprite_batch_gpu.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/renderer_gpu.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/filters_gpu.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/glsl_translate.c
+        ${CMAKE_SOURCE_DIR}/src/rendering/gpu_shader_runtime.c
+    )
+    target_include_directories(test_gpu_render PRIVATE ${CMAKE_SOURCE_DIR}/src)
+    target_compile_definitions(test_gpu_render PRIVATE RMMZ_RENDER_GPU)
+    target_link_libraries(test_gpu_render PRIVATE SDL3::SDL3 ${RMMZ_SYS_LIBS})
+    if(RMMZ_RUNTIME_SHADERS)
+        target_compile_definitions(test_gpu_render PRIVATE RMMZ_RUNTIME_SHADERS)
+        target_link_libraries(test_gpu_render PRIVATE
+            sdl_shadercross glslang SPIRV glslang-default-resource-limits)
+    endif()
+    add_test(NAME gpu_render COMMAND test_gpu_render)
+endif()

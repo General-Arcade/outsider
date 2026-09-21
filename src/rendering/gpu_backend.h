@@ -65,7 +65,12 @@ enum {
 /* Device lifecycle */
 
 /* Create the GPU device and claim the window. Returns false when no supported
-   backend is available, in which case the caller should fall back. */
+   backend is available, in which case the caller should fall back.
+
+   `window` may be NULL: a window is only needed to present, and rendering
+   happens into an offscreen surface regardless. Without one the backend draws
+   and reads back normally but presents nothing, which is what a test or a
+   machine with no display needs. Size that surface with gpu_frame_resize. */
 bool gpu_backend_init(SDL_Window *window);
 void gpu_backend_shutdown(void);
 bool gpu_backend_ready(void);
