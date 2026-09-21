@@ -40,6 +40,7 @@
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #ifndef RMMZ_DEFAULT_WIDTH
@@ -216,8 +217,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    error_handler_log(LOG_INFO, "Window created (%dx%d). OpenGL ready.",
-                      win_w, win_h);
+    error_handler_log(LOG_INFO, "Window created (%dx%d). %s ready.",
+                      win_w, win_h,
+#ifdef RMMZ_RENDER_GPU
+                      "GPU device"
+#else
+                      "OpenGL"
+#endif
+                      );
 
     JSEngine *js = js_engine_init();
     if (!js) {
