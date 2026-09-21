@@ -15,13 +15,24 @@ include(CMakeDependentOption)
 option(RMMZ_BUILD_TESTS "Build tests" ON)
 option(RMMZ_WIN32_CONSOLE "Windows: build outsider as a console application instead of a GUI application" OFF)
 
-# Rendering backend. "gpu" targets SDL3's GPU API (Vulkan or D3D12) with the
-# shader bytecode in src/rendering/shaders; "gl" is the original OpenGL 4.5
-# path, kept as a fallback for machines without a supported GPU backend.
+# Rendering backend. "gpu" targets SDL3's GPU API (Vulkan, D3D12 or Metal)
+# with the shader bytecode in src/rendering/shaders; "gl" is the original
+# OpenGL 4.5 path, kept as a fallback for machines without a supported GPU
+# backend.
 set(RMMZ_RENDER_BACKEND "gpu" CACHE STRING "Rendering backend: gpu or gl")
 set_property(CACHE RMMZ_RENDER_BACKEND PROPERTY STRINGS gpu gl)
 if(NOT RMMZ_RENDER_BACKEND MATCHES "^(gl|gpu)$")
     message(FATAL_ERROR "RMMZ_RENDER_BACKEND must be gpu or gl")
+endif()
+
+# Apple's OpenGL stops at 4.1 core and is deprecated; the GL renderer is built
+# on 4.5 direct state access, so that backend cannot run here at all. Metal
+# always exists instead, which is what the GPU backend uses.
+if(APPLE AND RMMZ_RENDER_BACKEND STREQUAL "gl")
+    message(FATAL_ERROR
+        "RMMZ_RENDER_BACKEND=gl needs OpenGL 4.5, and macOS provides at most "
+        "4.1. Build the GPU backend (the default) instead: "
+        "-DRMMZ_RENDER_BACKEND=gpu")
 endif()
 
 # Compile shaders a game's plugins supply at run time. Only the GPU backend
