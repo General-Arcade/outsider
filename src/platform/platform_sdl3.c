@@ -712,6 +712,10 @@ void platform_set_fullscreen(Platform *p, bool fullscreen)
        display mode switch. */
     SDL_SetWindowFullscreenMode(p->window, NULL);
     SDL_SetWindowFullscreen(p->window, fullscreen);
+    /* X11 and Wayland apply the change asynchronously; wait for it so that
+       platform_is_fullscreen() answers truthfully straight away, as it
+       already does on Windows. */
+    SDL_SyncWindow(p->window);
 }
 
 bool platform_is_fullscreen(Platform *p)

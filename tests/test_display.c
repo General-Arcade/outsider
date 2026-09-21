@@ -52,7 +52,9 @@ static void test_fullscreen_toggle(void)
 
     TEST(set_fullscreen_on);
     platform_set_fullscreen(g_platform, true);
-    /* Give SDL a moment to process the change. */
+    /* Give SDL a moment to process the change. Wayland only completes it
+       once the window commits another frame, as a running game always does. */
+    platform_swap_buffers(g_platform);
     SDL_Delay(50);
     SDL_PumpEvents();
     if (!platform_is_fullscreen(g_platform)) {
@@ -63,6 +65,7 @@ static void test_fullscreen_toggle(void)
 
     TEST(set_fullscreen_off);
     platform_set_fullscreen(g_platform, false);
+    platform_swap_buffers(g_platform);
     SDL_Delay(50);
     SDL_PumpEvents();
     if (platform_is_fullscreen(g_platform)) {
@@ -491,6 +494,11 @@ int main(int argc, char *argv[])
         fprintf(stderr, "SKIP: Could not initialize platform (no display?)\n");
         return 0;
     }
+
+    /* Wayland maps a window only once it has content, so put one frame on
+       screen before asking anything of the window. */
+    platform_swap_buffers(g_platform);
+    SDL_PumpEvents();
 
     printf("\n--- C-level platform tests ---\n");
     test_fullscreen_toggle();
