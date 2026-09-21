@@ -223,9 +223,10 @@ from SDL3 having no immediate mode:
   agree — so both backends draw into an offscreen surface and blit it to the
   window in `renderer_present`. Screenshots then mean the same thing
   everywhere, and rendering does not depend on the window being visible.
-- **Built-in shaders are bytecode.** `src/rendering/shaders/*.hlsl` is compiled
-  ahead of time by `tools/compile_shaders.py` into `shaders_generated.h`, which
-  is checked in, so building needs no shader compiler.
+- **Built-in shaders are translated ahead of time.** `src/rendering/shaders/*.hlsl`
+  is converted by `tools/compile_shaders.py` into `shaders_generated.h`, which is
+  checked in, so building needs no shader compiler. D3D12 and Vulkan get
+  bytecode (DXIL, SPIR-V); Metal gets MSL source, which it compiles itself.
 
 ### Shaders a game brings with it
 
@@ -247,10 +248,13 @@ local may still shadow them; uniform offsets are recorded so the JS side can go
 on setting them by name; and a vertex stage is generated per shader, because a
 pipeline is only valid when it writes every input the fragment stage declares.
 
-This adds roughly 4 MB to the binary and ships no redistributable compiler:
-D3D12 is reached through DXBC, which Windows' own `d3dcompiler` produces.
-Anything the rewrite cannot express still falls back to drawing unfiltered.
-Build with `-DRMMZ_RUNTIME_SHADERS=OFF` to leave the compiler out entirely.
+This adds 4 to 6 MB to the binary depending on the platform and toolchain
+(5.8 MB on macOS/arm64), and ships no redistributable compiler: D3D12 is
+reached through DXBC, which Windows' own `d3dcompiler` produces, and Metal
+takes the MSL that SDL_shadercross transpiles and compiles it with the shader
+compiler already in macOS. Anything the rewrite cannot express still falls back
+to drawing unfiltered. Build with `-DRMMZ_RUNTIME_SHADERS=OFF` to leave the
+compiler out entirely.
 
 `tools/compile_shaders.py` emits all three formats through
 [SDL_shadercross](https://github.com/libsdl-org/SDL_shadercross), which knows
@@ -266,6 +270,12 @@ The generated header is checked in, so only editing a shader needs the tool.
 Configuring the GPU backend on a platform whose format is missing from that
 header fails at CMake time with a message pointing back here, rather than
 building a runtime that cannot create a device.
+
+One wrinkle when regenerating: `main` is a reserved name in MSL, so SPIRV-Cross
+emits `main0` instead, and the loader asks Metal for that entry point while
+DXIL and SPIR-V keep `main`. Getting it wrong costs every shader on Metal —
+`SDL_CreateGPUShader` fails with "Creating MTLFunction failed" and no device
+comes up.
 
 ## Usage
 
