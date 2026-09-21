@@ -11,6 +11,9 @@ set(SDL_SHARED OFF CACHE BOOL "" FORCE)
 set(SDL_STATIC ON CACHE BOOL "" FORCE)
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+# XTest only synthesises input for SDL's own tests; SDL treats its absence as
+# a fatal configure error, so a Linux box without libxtst-dev could not build.
+set(SDL_X11_XTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(SDL3)
 
 # QuickJS-NG
