@@ -1,0 +1,26 @@
+name: Probe
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: windows-2022
+    steps:
+      - name: Temp environment
+        shell: cmd
+        run: |
+          echo TMP=%TMP%
+          echo TEMP=%TEMP%
+          echo CD=%CD%
+          echo USERNAME=%USERNAME%
+          echo --- does it exist? ---
+          if exist "%TEMP%" (echo TEMP EXISTS) else (echo TEMP MISSING)
+          if exist "%TEMP%\." (echo TEMP IS DIR) else (echo TEMP NOT DIR)
+          echo --- can we write? ---
+          echo hello> "%TEMP%\probe_test.txt" && echo WRITE OK || echo WRITE FAILED
+          echo --- mkdir a subdir ---
+          mkdir "%TEMP%\probe_subdir" && echo MKDIR OK || echo MKDIR FAILED
+          echo --- long form ---
+          for %%I in ("%TEMP%") do @echo LONG=%%~fI
+          echo --- drive of temp vs cwd ---
+          dir "%TEMP%" /b | find /c /v ""
