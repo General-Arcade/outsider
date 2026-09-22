@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build xvfb \
+            ninja-build xvfb openbox \
             libasound2-dev libpulse-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
             libxi-dev libxfixes-dev libxss-dev libxkbcommon-dev \
@@ -96,17 +96,22 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       # The GPU tests report themselves skipped when the runner has no usable
-      # device, so this stays meaningful without requiring one. Linux has no
-      # display at all, so the window tests run against a virtual one rather
-      # than being skipped.
+      # device, so this stays meaningful without requiring one.
+      #
+      # Linux has no display at all, so the window tests run against a virtual
+      # one. A bare X server is not enough on its own: going fullscreen is a
+      # request only a window manager can grant, so one runs alongside it.
       - name: Test
         shell: bash
         run: |
           if [ "${RUNNER_OS}" = "Linux" ]; then
-            xvfb-run -a ctest --test-dir build -C Release --output-on-failure
-          else
-            ctest --test-dir build -C Release --output-on-failure
+            Xvfb :99 -screen 0 1920x1080x24 &
+            export DISPLAY=:99
+            sleep 2
+            openbox &
+            sleep 2
           fi
+          ctest --test-dir build -C Release --output-on-failure
 
       # Installs the executable plus shims/ — the layout the runtime expects
       # when it is started with no arguments.
