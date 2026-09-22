@@ -387,6 +387,18 @@ bool file_io_mkdir(const char *path)
     for (size_t i = 1; i < len; i++) {
         if (tmp[i] == '/' || tmp[i] == '\\') {
             tmp[i] = '\0';
+#ifdef _WIN32
+            /* "C:" is a drive designator rather than a directory. Windows
+               reads it as that drive's *current* directory, which does not
+               exist when the process is running from another drive: stat()
+               then fails with ENOENT and _mkdir() with EACCES, and a game on
+               a different drive from the process could not create its save
+               folder. The drive itself always exists, so skip it. */
+            if (i == 2 && tmp[1] == ':') {
+                tmp[i] = '/';
+                continue;
+            }
+#endif
             if (!file_io_is_directory(tmp)) {
                 if (mkdir_p(tmp) != 0 && errno != EEXIST) return false;
             }
