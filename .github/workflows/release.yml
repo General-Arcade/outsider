@@ -55,7 +55,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            ninja-build \
+            ninja-build xvfb \
             libasound2-dev libpulse-dev \
             libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
             libxi-dev libxfixes-dev libxss-dev libxkbcommon-dev \
@@ -96,10 +96,17 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       # The GPU tests report themselves skipped when the runner has no usable
-      # device, so this stays meaningful without requiring one.
+      # device, so this stays meaningful without requiring one. Linux has no
+      # display at all, so the window tests run against a virtual one rather
+      # than being skipped.
       - name: Test
         shell: bash
-        run: ctest --test-dir build -C Release --output-on-failure
+        run: |
+          if [ "${RUNNER_OS}" = "Linux" ]; then
+            xvfb-run -a ctest --test-dir build -C Release --output-on-failure
+          else
+            ctest --test-dir build -C Release --output-on-failure
+          fi
 
       # Installs the executable plus shims/ — the layout the runtime expects
       # when it is started with no arguments.
