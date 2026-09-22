@@ -1,0 +1,158 @@
+name: Release
+
+# Builds the runtime for all three platforms and publishes the archives.
+#
+# Pushing a v* tag builds and publishes a release. Running it by hand builds
+# and uploads the same archives as workflow artifacts without publishing, so a
+# release can be rehearsed before it is tagged.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing should not hide the state of the other two.
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-x64
+            os: windows-2022
+          - name: linux-x64
+            os: ubuntu-22.04
+          - name: macos-universal
+            os: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag gives the release its version; a manual run is labelled "dev".
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
+      # SDL3 needs the X11, Wayland and audio headers at build time. It loads
+      # those libraries by name at run time rather than linking them, so the
+      # binary still starts on a machine that has only one of X11 or Wayland.
+      # mesa-vulkan-drivers is for ctest alone: lavapipe gives the GPU tests a
+      # software Vulkan device on a runner that has no real one.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build \
+            libasound2-dev libpulse-dev \
+            libx11-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libxi-dev libxfixes-dev libxss-dev libxkbcommon-dev \
+            libwayland-dev wayland-protocols libdecor-0-dev \
+            libdbus-1-dev libudev-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libdrm-dev libgbm-dev \
+            mesa-vulkan-drivers libvulkan1
+
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      # Windows uses the Visual Studio generator so no separate step has to
+      # put MSVC on PATH; the other two use Ninja.
+      - name: Configure
+        shell: bash
+        run: |
+          if [ "${RUNNER_OS}" = "Windows" ]; then
+            cmake -S . -B build -G "Visual Studio 17 2022" -A x64 \
+              -DRMMZ_BUILD_TESTS=ON
+          elif [ "${RUNNER_OS}" = "macOS" ]; then
+            # One binary for both Apple Silicon and Intel. 11.0 is the oldest
+            # release Apple Silicon ever shipped with, so it costs nothing.
+            cmake -S . -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+              -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+              -DRMMZ_BUILD_TESTS=ON
+          else
+            cmake -S . -B build -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DRMMZ_BUILD_TESTS=ON
+          fi
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel
+
+      # The GPU tests report themselves skipped when the runner has no usable
+      # device, so this stays meaningful without requiring one.
+      - name: Test
+        shell: bash
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      # Installs the executable plus shims/ — the layout the runtime expects
+      # when it is started with no arguments.
+      - name: Stage
+        shell: bash
+        run: |
+          DIR="outsider-${{ steps.version.outputs.version }}-${{ matrix.name }}"
+          cmake --install build --config Release \
+            --component runtime --prefix "staging/${DIR}"
+          cp README.md LICENSE AUTHORS "staging/${DIR}/"
+          cp -r LICENSES "staging/${DIR}/"
+          echo "STAGE_DIR=${DIR}" >> "$GITHUB_ENV"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "staging/$env:STAGE_DIR" -DestinationPath "$env:STAGE_DIR.zip"
+
+      - name: Archive (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: tar -czf "${STAGE_DIR}.tar.gz" -C staging "${STAGE_DIR}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            *.zip
+            *.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    # Only a tag publishes. A manual run stops after the archives are built,
+    # which is what makes it safe to use as a rehearsal.
+    if: github.ref_type == 'tag'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "Outsider ${GITHUB_REF_NAME}" \
+            --notes-file .github/RELEASE_NOTES.md \
+            --generate-notes \
+            artifacts/*

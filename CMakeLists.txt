@@ -206,14 +206,22 @@ if(RMMZ_USE_EFFEKSEER)
     target_link_libraries(outsider PRIVATE Effekseer EffekseerRendererGL)
 endif()
 
-# Install target for distribution packaging
+# Install target for distribution packaging.
+#
+# Everything here belongs to the "runtime" component so a distribution can be
+# staged with `cmake --install --component runtime`. Dependencies fetched into
+# the build carry install rules of their own -- QuickJS installs its CLI,
+# headers and import library unconditionally -- and without a component those
+# land in the same prefix and ship inside the archive.
 install(TARGETS outsider
     RUNTIME DESTINATION .
+    COMPONENT runtime
 )
 
 # Install shim JS files alongside executable
 install(DIRECTORY src/shims/
     DESTINATION shims
+    COMPONENT runtime
     FILES_MATCHING PATTERN "*.js"
 )
 
@@ -222,6 +230,7 @@ set(RMMZ_GAME_DIR "" CACHE PATH "Path to RPG Maker MZ game directory for packagi
 if(RMMZ_GAME_DIR)
     install(DIRECTORY "${RMMZ_GAME_DIR}/"
         DESTINATION game
+        COMPONENT runtime
         PATTERN "*.exe" EXCLUDE
         PATTERN "*.dll" EXCLUDE
         PATTERN "*.pak" EXCLUDE
