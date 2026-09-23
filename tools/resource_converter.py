@@ -22,7 +22,15 @@ from pathlib import Path
 
 RPGMV_HEADER_SIZE = 16
 RPGMV_MAGIC = b"RPGMV"
-ENCRYPTED_EXTENSIONS = {".png_": ".png", ".ogg_": ".ogg"}
+# MZ appends an underscore to the real extension; MV renames it outright.
+# The header and key are the same in both, so only the names differ.
+ENCRYPTED_EXTENSIONS = {
+    ".png_": ".png",
+    ".ogg_": ".ogg",
+    ".rpgmvp": ".png",
+    ".rpgmvo": ".ogg",
+    ".rpgmvm": ".m4a",
+}
 
 
 def parse_encryption_key(hex_key: str) -> bytes:

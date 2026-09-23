@@ -252,6 +252,40 @@
 
         renameSync: function(oldPath, newPath) {
             __native_io.renameSync(oldPath, newPath);
+        },
+
+        /* Enough of a Stats object for the calls plugins actually make:
+           isDirectory() to decide whether to descend, isFile() and size.
+           Node throws on a missing path and plugins wrap this in try/catch to
+           test existence, so throwing is part of the contract. size reads the
+           file, so it is left until something asks for it. */
+        statSync: function(path) {
+            if (!__native_io.existsSync(path)) {
+                var err = new Error("ENOENT: no such file or directory, stat '" + path + "'");
+                err.code = "ENOENT";
+                err.errno = -2;
+                err.path = path;
+                throw err;
+            }
+            var isDir = !!__native_io.isDirSync(path);
+            var stats = {
+                isDirectory: function() { return isDir; },
+                isFile: function() { return !isDir; },
+                isSymbolicLink: function() { return false; },
+                isBlockDevice: function() { return false; },
+                isCharacterDevice: function() { return false; },
+                isFIFO: function() { return false; },
+                isSocket: function() { return false; }
+            };
+            Object.defineProperty(stats, "size", {
+                enumerable: true,
+                get: function() {
+                    if (isDir) return 0;
+                    var buf = __native_io.readFileBinary(path);
+                    return buf ? buf.byteLength : 0;
+                }
+            });
+            return stats;
         }
     };
 
@@ -317,6 +351,18 @@
                 resolved = resolved.substring(0, resolved.length - 1);
             }
             return resolved;
+        },
+
+        /* ".png" for "a/b/c.png", "" when the basename has no dot or starts
+           with one. Plugins that walk a directory use it with basename() to
+           split a filename. */
+        extname: function(p) {
+            if (typeof p !== "string") return "";
+            var base = p.replace(/\\/g, "/");
+            var slash = base.lastIndexOf("/");
+            if (slash >= 0) base = base.slice(slash + 1);
+            var dot = base.lastIndexOf(".");
+            return dot > 0 ? base.slice(dot) : "";
         },
 
         sep: "/",
