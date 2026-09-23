@@ -3353,8 +3353,22 @@
 
     /* PIXI.Renderer (wraps __native_renderer) */
 
-    function PixiRenderer(options) {
+    function PixiRenderer(options, arg2, arg3) {
         EventEmitter.call(this);
+
+        /* PIXI 4 took (width, height, options) and PIXI 5 takes a single
+           options object. RPG Maker MV uses the older form -- reading it as
+           options would leave the renderer at its default size, and the whole
+           frame would then be laid out against the wrong screen rectangle. */
+        if (typeof options === "number") {
+            var opts = {};
+            if (arg3 && typeof arg3 === "object") {
+                for (var k in arg3) opts[k] = arg3[k];
+            }
+            opts.width = options;
+            opts.height = arg2;
+            options = opts;
+        }
 
         options = options || {};
         this.type = 1; /* RENDERER_TYPE.WEBGL */
@@ -3380,6 +3394,12 @@
         if (typeof __native_filters !== "undefined" && __native_filters.init) {
             __native_filters.init();
         }
+
+        /* Establish the letterbox viewport now rather than waiting for a
+           resize. MZ calls resize() while it builds its elements, but MV only
+           does so from a window-resize handler, so a game that never resizes
+           would draw at its own size in the corner of a scaled window. */
+        this.resize(this.screen.width, this.screen.height);
 
         /* Stub GL context for Tilemap.Renderer and effekseer compatibility. */
         this.gl = {
@@ -4922,6 +4942,141 @@
         _releaseFilterFBO(maskFBO);
         _releaseFilterFBO(outFBO);
     };
+
+    /* ---- PIXI 4 compatibility (RPG Maker MV) ----
+       MV is written against PIXI 4.5.4, which spelled several of these
+       differently or kept them in namespaces PIXI 5 flattened. Aliasing costs
+       nothing for MZ, which never looks any of them up. */
+
+    /* VoidFilter was PIXI 4's pass-through filter; AlphaFilter took over the
+       role, and the scene graph already recognises it as a no-op. */
+    PIXI.filters.VoidFilter = PIXI.filters.AlphaFilter;
+
+    /* TilingSprite and friends lived under PIXI.extras. PictureTilingSprite
+       comes from pixi-picture, which MV ships to get its blend modes; the
+       plain tiling sprite stands in for it. */
+    PIXI.extras = PIXI.extras || {};
+    PIXI.extras.TilingSprite = PIXI.TilingSprite;
+    PIXI.extras.PictureTilingSprite = PIXI.TilingSprite;
+
+    /* Lower-case alias of BLEND_MODES. */
+    PIXI.blendModes = PIXI.BLEND_MODES;
+
+    PIXI.RENDERER_TYPE = { UNKNOWN: 0, WEBGL: 1, CANVAS: 2 };
+
+    /* Texture garbage collection is PIXI's own bookkeeping; the native
+       texture registry does that job, so the mode is only ever read back. */
+    PIXI.GC_MODES = { AUTO: 0, MANUAL: 1 };
+    PIXI.settings.GC_MODE = PIXI.GC_MODES.AUTO;
+
+    /* PIXI 4 printed a console banner unless asked not to. */
+    PIXI.dontSayHello = true;
+
+    /* MV calls this instead of constructing a renderer directly. There is only
+       one renderer here, and it is always the WebGL-shaped one. */
+    PIXI.autoDetectRenderer = function(width, height, options) {
+        return new PIXI.Renderer(Object.assign({}, options || {}, {
+            width: width,
+            height: height
+        }));
+    };
+
+    /* MV branches on the renderer being a CanvasRenderer to pick its slow
+       path. Nothing here is one, so the constructor exists only to be
+       compared against and never matches. */
+    PIXI.CanvasRenderer = function CanvasRenderer() {
+        throw new Error("PIXI.CanvasRenderer: the runtime renders through the GPU backend");
+    };
+
+    /* pixi-gl-core exposed the raw WebGL wrappers. Only this one flag is read,
+       and the native backend does its own vertex array handling. */
+    PIXI.glCore = { VertexArrayObject: { FORCE_NATIVE: true } };
+
+    /* PIXI 4 kept every drawn primitive in a graphicsData array, each entry
+       carrying the shape object it was built from. MV's WindowLayer reaches
+       for graphicsData[0].shape and then moves that rectangle directly to
+       reposition its window mask, so the entry has to expose the live command
+       rather than a copy. Rect commands already carry x/y/width/height under
+       the names PIXI.Rectangle uses, so the command is the shape. */
+    Object.defineProperty(PIXI.Graphics.prototype, "graphicsData", {
+        configurable: true,
+        get: function() {
+            var cmds = this._commands;
+            if (!this._graphicsData || this._graphicsData.length !== cmds.length) {
+                this._graphicsData = cmds.map(function(cmd) {
+                    return {
+                        shape: cmd,
+                        fillAlpha: cmd.fill ? cmd.fill.alpha : 0,
+                        lineWidth: cmd.line ? cmd.line.width : 0,
+                        lineColor: cmd.line ? cmd.line.color : 0,
+                        fillColor: cmd.fill ? cmd.fill.color : 0,
+                        holes: []
+                    };
+                });
+            }
+            return this._graphicsData;
+        }
+    });
+
+    /* ---- pixi-tilemap stand-ins ----
+       MV builds its ShaderTilemap out of these two containers and paints into
+       them a rectangle at a time. They collect the rectangles; mv_shim.js
+       overrides ShaderTilemap's render to hand them to the native tilemap
+       renderer, the same division of labour tilemap_shim.js uses for MZ. */
+    PIXI.tilemap = {};
+    PIXI.tilemap.TileRenderer = {
+        SCALE_MODE: PIXI.SCALE_MODES.NEAREST,
+        DO_CLEAR: true
+    };
+
+    function ZLayer(tilemap, zIndex) {
+        PIXI.Container.call(this);
+        this.tilemap = tilemap;
+        this.z = zIndex;
+    }
+    ZLayer.prototype = Object.create(PIXI.Container.prototype);
+    ZLayer.prototype.constructor = ZLayer;
+    ZLayer.prototype.clear = function() {
+        for (var i = 0; i < this.children.length; i++) {
+            if (this.children[i].clear) this.children[i].clear();
+        }
+    };
+    PIXI.tilemap.ZLayer = ZLayer;
+
+    function CompositeRectTileLayer(zIndex, bitmaps, useSquare) {
+        PIXI.Container.call(this);
+        this.z = this.zIndex = zIndex;
+        this.useSquare = useSquare;
+        this.rects = [];
+        this.textures = bitmaps || [];
+    }
+    CompositeRectTileLayer.prototype = Object.create(PIXI.Container.prototype);
+    CompositeRectTileLayer.prototype.constructor = CompositeRectTileLayer;
+
+    CompositeRectTileLayer.prototype.clear = function() {
+        this.rects.length = 0;
+    };
+
+    CompositeRectTileLayer.prototype.setBitmaps = function(bitmaps) {
+        this.textures = bitmaps || [];
+    };
+
+    /* MV calls this once per visible tile. Source rect (u,v,tileWidth,
+       tileHeight) out of texture `textureIndex`, placed at (x,y); the
+       animation offsets are how MV scrolls animated water. */
+    CompositeRectTileLayer.prototype.addRect = function(textureIndex, u, v, x, y,
+                                                        tileWidth, tileHeight,
+                                                        animX, animY) {
+        this.rects.push({
+            texture: textureIndex,
+            u: u, v: v, x: x, y: y,
+            w: tileWidth, h: tileHeight,
+            animX: animX || 0, animY: animY || 0
+        });
+    };
+
+    PIXI.tilemap.CompositeRectTileLayer = CompositeRectTileLayer;
+    PIXI.tilemap.RectTileLayer = CompositeRectTileLayer;
 
     globalThis.PIXI = PIXI;
 

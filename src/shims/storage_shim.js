@@ -325,9 +325,97 @@
 
     /* require() */
 
+    /* nw.gui: RPG Maker MV asks NW.js for its window during start-up, and
+       plugins reach for the same object to go fullscreen or quit. Methods with
+       a native equivalent are wired to it; the rest are inert. Returning an
+       empty stub instead would abort SceneManager.initNwjs at gui.Window.get().
+
+       Utils.isNwjs() has to keep reporting true: MV picks where saves go from
+       it, and only the NW.js answer writes save/file1.rpgsave next to the game
+       the way the original player does. */
+    var _nwWindow = {
+        menu: null,
+        title: "",
+        width: 0,
+        height: 0,
+        x: 0,
+        y: 0,
+        isFullscreen: false,
+        show: function() {},
+        hide: function() {},
+        focus: function() {},
+        blur: function() {},
+        maximize: function() {},
+        unmaximize: function() {},
+        minimize: function() {},
+        restore: function() {},
+        setAlwaysOnTop: function() {},
+        setPosition: function() {},
+        setShowInTaskbar: function() {},
+        moveTo: function() {},
+        resizeTo: function() {},
+        showDevTools: function() {},
+        closeDevTools: function() {},
+        on: function() {},
+        removeAllListeners: function() {},
+        reload: function() {},
+        enterFullscreen: function() {
+            this.isFullscreen = true;
+            if (typeof __native_platform !== "undefined") {
+                __native_platform.setFullscreen(true);
+            }
+        },
+        leaveFullscreen: function() {
+            this.isFullscreen = false;
+            if (typeof __native_platform !== "undefined") {
+                __native_platform.setFullscreen(false);
+            }
+        },
+        toggleFullscreen: function() {
+            if (this.isFullscreen) this.leaveFullscreen();
+            else this.enterFullscreen();
+        },
+        close: function() {
+            if (typeof __native_platform !== "undefined") {
+                __native_platform.quit();
+            }
+        }
+    };
+
+    function NwMenu() {
+        this.items = [];
+    }
+    NwMenu.prototype.append = function(item) { this.items.push(item); };
+    NwMenu.prototype.insert = function(item) { this.items.push(item); };
+    NwMenu.prototype.remove = function() {};
+    /* macOS-only in MV, and there is no menubar to build here. */
+    NwMenu.prototype.createMacBuiltin = function() {};
+
+    var nwGuiModule = {
+        Window: {
+            get: function() { return _nwWindow; }
+        },
+        Menu: NwMenu,
+        MenuItem: function MenuItem(options) {
+            Object.assign(this, options || {});
+        },
+        Shell: {
+            openExternal: function() {},
+            openItem: function() {}
+        },
+        App: {
+            quit: function() { _nwWindow.close(); },
+            closeAllWindows: function() { _nwWindow.close(); },
+            argv: [],
+            manifest: {}
+        },
+        Screen: { Init: function() {}, screens: [] }
+    };
+
     var _modules = {
         "fs": fsModule,
-        "path": pathModule
+        "path": pathModule,
+        "nw.gui": nwGuiModule
     };
 
     globalThis.require = function(moduleName) {
@@ -347,7 +435,25 @@
                 /* StorageManager.fileDirectoryPath() derives save/ from this. */
                 filename: __native_io.getGameRoot() + "/index.html"
             },
-            platform: "linux",
+            /* "win32" / "darwin" / "linux", as Node spells them. RPG Maker MV
+               compares against 'darwin' when it builds the macOS menu bar, and
+               plugins branch on it for path handling, so it has to be the real
+               one rather than a fixed guess. */
+            platform: (typeof __native_platform !== "undefined" &&
+                       __native_platform.getOS)
+                      ? __native_platform.getOS() : "win32",
+
+            /* NW.js reports the versions it bundles. MV and several plugins
+               gate features on node-webkit being recent enough, and read the
+               value without checking that process.versions exists at all. */
+            versions: {
+                "node-webkit": "0.29.4",
+                nw: "0.29.4",
+                chromium: "66.0.3359.181",
+                node: "9.11.1",
+                v8: "6.6.346.32"
+            },
+
             env: {},
             argv: [],
             exit: function() {

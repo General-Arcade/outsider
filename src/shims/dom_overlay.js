@@ -453,6 +453,13 @@
         var d = el.style && el.style.display;
         if (d === "none") return true;
         if (el.style && el.style.visibility === "hidden") return true;
+        /* Fully transparent counts as hidden. RPG Maker MV keeps its "WebGL
+           mode" box in the page at opacity 0 and fades it in only when asked,
+           so drawing it regardless puts debug text over the game. */
+        if (el.style && el.style.opacity !== undefined && el.style.opacity !== "") {
+            var o = parseFloat(el.style.opacity);
+            if (!isNaN(o) && o <= 0) return true;
+        }
         return false;
     }
 

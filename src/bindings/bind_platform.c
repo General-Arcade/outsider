@@ -109,9 +109,26 @@ static JSValue js_platform_quit(JSContext *ctx, JSValueConst this_val,
     return JS_UNDEFINED;
 }
 
+/* getOS() -> "win32" | "darwin" | "linux"
+   Spelled the way Node's process.platform is, because that is what the shims
+   report it as and what RPG Maker and its plugins compare against. */
+static JSValue js_platform_get_os(JSContext *ctx, JSValueConst this_val,
+                                  int argc, JSValueConst *argv)
+{
+    (void)this_val; (void)argc; (void)argv;
+#if defined(_WIN32)
+    return JS_NewString(ctx, "win32");
+#elif defined(__APPLE__)
+    return JS_NewString(ctx, "darwin");
+#else
+    return JS_NewString(ctx, "linux");
+#endif
+}
+
 /* Registration */
 
 static const JSCFunctionListEntry js_platform_funcs[] = {
+    JS_CFUNC_DEF("getOS",            0, js_platform_get_os),
     JS_CFUNC_DEF("setFullscreen",    1, js_platform_set_fullscreen),
     JS_CFUNC_DEF("isFullscreen",     0, js_platform_is_fullscreen),
     JS_CFUNC_DEF("getDisplaySize",   0, js_platform_get_display_size),

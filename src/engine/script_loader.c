@@ -288,22 +288,84 @@ static const char *RMMZ_CORE_SCRIPTS[] = {
     NULL
 };
 
+/* RPG Maker MV core scripts in load order. Same six roles, different names:
+   MV predates the rename and ships its own PIXI 4 under js/libs. */
+static const char *RMMV_CORE_SCRIPTS[] = {
+    "js/rpg_core.js",
+    "js/rpg_managers.js",
+    "js/rpg_objects.js",
+    "js/rpg_scenes.js",
+    "js/rpg_sprites.js",
+    "js/rpg_windows.js",
+    NULL
+};
+
 /* Shims loaded after the core scripts and plugins, to patch RPG Maker
-   classes that depend on PIXI internals the runtime does not implement. */
-static const char *POST_CORE_SHIMS[] = {
+   classes that depend on PIXI internals the runtime does not implement.
+   The two engines put different classes in that position. */
+static const char *POST_CORE_SHIMS_MZ[] = {
     "tilemap_shim.js",
     NULL
 };
 
-/* Library scripts loaded before core. */
-static const char *LIB_SCRIPTS[] = {
+static const char *POST_CORE_SHIMS_MV[] = {
+    "mv_shim.js",
+    NULL
+};
+
+/* Library scripts loaded before core. MZ compresses saves with pako; MV uses
+   LZString, and ships it here. Neither engine's own PIXI is loaded: the shim
+   layer provides that. */
+static const char *LIB_SCRIPTS_MZ[] = {
     "js/libs/pako.min.js",
     NULL
 };
 
+static const char *LIB_SCRIPTS_MV[] = {
+    "js/libs/lz-string.js",
+    NULL
+};
+
+/* Which engine a game directory holds, decided by the core script it ships. */
+typedef enum {
+    RM_ENGINE_MZ,
+    RM_ENGINE_MV
+} RmEngine;
+
+static RmEngine detect_engine(const char *game_dir)
+{
+    RmEngine engine = RM_ENGINE_MZ;
+    char *probe = join_path(game_dir, "js/rpg_core.js");
+    if (probe) {
+        if (file_io_exists(probe)) engine = RM_ENGINE_MV;
+        free(probe);
+    }
+    return engine;
+}
+
+static const char **core_scripts_for(RmEngine e)
+{
+    return (e == RM_ENGINE_MV) ? RMMV_CORE_SCRIPTS : RMMZ_CORE_SCRIPTS;
+}
+
+static const char **lib_scripts_for(RmEngine e)
+{
+    return (e == RM_ENGINE_MV) ? LIB_SCRIPTS_MV : LIB_SCRIPTS_MZ;
+}
+
+static const char **post_core_shims_for(RmEngine e)
+{
+    return (e == RM_ENGINE_MV) ? POST_CORE_SHIMS_MV : POST_CORE_SHIMS_MZ;
+}
+
 bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *game_dir)
 {
     if (!engine || !shim_dir || !game_dir) return false;
+
+    RmEngine rm = detect_engine(game_dir);
+    const char **lib_scripts = lib_scripts_for(rm);
+    const char **core_scripts = core_scripts_for(rm);
+    printf("script_loader: engine: RPG Maker %s\n", rm == RM_ENGINE_MV ? "MV" : "MZ");
 
     /* Step 1: Load shims */
     if (!script_loader_load_shims(engine, shim_dir)) {
@@ -311,9 +373,9 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
     }
     printf("script_loader: shims loaded\n");
 
-    /* Step 2: Load library scripts (pako, etc.) */
-    for (int i = 0; LIB_SCRIPTS[i] != NULL; i++) {
-        char *path = join_path(game_dir, LIB_SCRIPTS[i]);
+    /* Step 2: Load library scripts (pako, lz-string) */
+    for (int i = 0; lib_scripts[i] != NULL; i++) {
+        char *path = join_path(game_dir, lib_scripts[i]);
         if (!path) return false;
 
         if (file_io_exists(path)) {
@@ -322,7 +384,7 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
                 fprintf(stderr, "script_loader: warning: failed to load lib: %s\n", path);
             }
             js_engine_execute_pending_jobs(engine);
-            note_script_loaded(engine, LIB_SCRIPTS[i]);
+            note_script_loaded(engine, lib_scripts[i]);
         } else {
             fprintf(stderr, "script_loader: warning: lib not found: %s\n", path);
         }
@@ -330,9 +392,9 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
     }
     printf("script_loader: libraries loaded\n");
 
-    /* Step 3: Load RPG Maker MZ core scripts */
-    for (int i = 0; RMMZ_CORE_SCRIPTS[i] != NULL; i++) {
-        char *path = join_path(game_dir, RMMZ_CORE_SCRIPTS[i]);
+    /* Step 3: Load the engine's core scripts */
+    for (int i = 0; core_scripts[i] != NULL; i++) {
+        char *path = join_path(game_dir, core_scripts[i]);
         if (!path) return false;
 
         if (file_io_exists(path)) {
@@ -340,10 +402,10 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
             if (!ok) {
                 /* Non-fatal: core scripts may reference PIXI features the shim lacks. */
                 fprintf(stderr, "script_loader: note: errors during %s (may be expected for PIXI deps)\n",
-                        RMMZ_CORE_SCRIPTS[i]);
+                        core_scripts[i]);
             }
             js_engine_execute_pending_jobs(engine);
-            note_script_loaded(engine, RMMZ_CORE_SCRIPTS[i]);
+            note_script_loaded(engine, core_scripts[i]);
         } else {
             fprintf(stderr, "script_loader: warning: core script not found: %s\n", path);
         }
@@ -455,8 +517,9 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
 
     /* Step 4b: Post-core shims go after plugins so they win over plugin
        patches to the same engine classes (e.g. Tilemap.Layer.prototype.render). */
-    for (int i = 0; POST_CORE_SHIMS[i] != NULL; i++) {
-        char *path = join_path(shim_dir, POST_CORE_SHIMS[i]);
+    const char **post_core_shims = post_core_shims_for(rm);
+    for (int i = 0; post_core_shims[i] != NULL; i++) {
+        char *path = join_path(shim_dir, post_core_shims[i]);
         if (!path) return false;
 
         bool ok = js_engine_eval_file(engine, path);
@@ -536,6 +599,11 @@ char **script_loader_get_load_order(const char *shim_dir, const char *game_dir, 
     size_t count = 0;
     size_t cap = 0;
 
+    RmEngine rm = detect_engine(game_dir);
+    const char **lib_scripts = lib_scripts_for(rm);
+    const char **core_scripts = core_scripts_for(rm);
+    const char **post_core_shims = post_core_shims_for(rm);
+
     /* 1. Shims */
     for (int i = 0; SHIM_FILES[i] != NULL; i++) {
         char *path = join_path(shim_dir, SHIM_FILES[i]);
@@ -546,8 +614,8 @@ char **script_loader_get_load_order(const char *shim_dir, const char *game_dir, 
     }
 
     /* 2. Libs */
-    for (int i = 0; LIB_SCRIPTS[i] != NULL; i++) {
-        char *path = join_path(game_dir, LIB_SCRIPTS[i]);
+    for (int i = 0; lib_scripts[i] != NULL; i++) {
+        char *path = join_path(game_dir, lib_scripts[i]);
         if (path) {
             append_path(&list, &count, &cap, path);
             free(path);
@@ -555,8 +623,8 @@ char **script_loader_get_load_order(const char *shim_dir, const char *game_dir, 
     }
 
     /* 3. Core scripts */
-    for (int i = 0; RMMZ_CORE_SCRIPTS[i] != NULL; i++) {
-        char *path = join_path(game_dir, RMMZ_CORE_SCRIPTS[i]);
+    for (int i = 0; core_scripts[i] != NULL; i++) {
+        char *path = join_path(game_dir, core_scripts[i]);
         if (path) {
             append_path(&list, &count, &cap, path);
             free(path);
@@ -564,8 +632,8 @@ char **script_loader_get_load_order(const char *shim_dir, const char *game_dir, 
     }
 
     /* 3b. Post-core shims */
-    for (int i = 0; POST_CORE_SHIMS[i] != NULL; i++) {
-        char *path = join_path(shim_dir, POST_CORE_SHIMS[i]);
+    for (int i = 0; post_core_shims[i] != NULL; i++) {
+        char *path = join_path(shim_dir, post_core_shims[i]);
         if (path) {
             append_path(&list, &count, &cap, path);
             free(path);

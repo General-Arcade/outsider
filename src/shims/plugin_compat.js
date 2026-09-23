@@ -471,4 +471,29 @@
         });
     }
 
+    /* RPG Maker MV ships iphone-inline-video and calls this while building its
+       DOM elements. It works around iOS refusing to play video inline, which
+       is not a situation a native runtime can be in. Without it defined the
+       ReferenceError aborts Graphics._createAllElements halfway, and the
+       elements after the video -- the upper canvas among them -- never exist. */
+    if (typeof globalThis.makeVideoPlayableInline === "undefined") {
+        globalThis.makeVideoPlayableInline = function() {};
+    }
+
+    /* MV's other bundled library: the FPS counter it overlays on the page when
+       the F2 debug key is pressed. It is constructed unconditionally during
+       start-up, so it has to exist; the runtime reports frame timing through
+       --perf instead, and this draws nothing. isPaused reads true so MV never
+       treats a hidden meter as running. */
+    if (typeof globalThis.FPSMeter === "undefined") {
+        globalThis.FPSMeter = function FPSMeter() {};
+        globalThis.FPSMeter.prototype.show = function() { return this; };
+        globalThis.FPSMeter.prototype.hide = function() { return this; };
+        globalThis.FPSMeter.prototype.tick = function() { return this; };
+        globalThis.FPSMeter.prototype.tickStart = function() { return this; };
+        globalThis.FPSMeter.prototype.showFps = function() { return this; };
+        globalThis.FPSMeter.prototype.showDuration = function() { return this; };
+        globalThis.FPSMeter.prototype.isPaused = true;
+    }
+
 })();
