@@ -5043,28 +5043,162 @@
     };
     PIXI.tilemap.ZLayer = ZLayer;
 
+    /* The layer that actually holds tiles. pixi-tilemap splits a composite
+       into one of these per texture group, and MV paints into children[0]
+       rather than the composite itself, so the child has to exist. */
+    function RectTileLayer(zIndex) {
+        PIXI.Container.call(this);
+        this.z = this.zIndex = zIndex;
+        this.rects = [];
+        this.textures = [];
+        this._images = [];
+    }
+    RectTileLayer.prototype = Object.create(PIXI.Container.prototype);
+    RectTileLayer.prototype.constructor = RectTileLayer;
+
     function CompositeRectTileLayer(zIndex, bitmaps, useSquare) {
         PIXI.Container.call(this);
         this.z = this.zIndex = zIndex;
         this.useSquare = useSquare;
-        this.rects = [];
-        this.textures = bitmaps || [];
+        this.addChild(new RectTileLayer(zIndex));
+        this.setBitmaps(bitmaps || []);
     }
     CompositeRectTileLayer.prototype = Object.create(PIXI.Container.prototype);
     CompositeRectTileLayer.prototype.constructor = CompositeRectTileLayer;
 
+    /* The composite forwards to its one child so either object can be used
+       interchangeably, which MV does: it clears the composite but paints the
+       child. */
     CompositeRectTileLayer.prototype.clear = function() {
+        this.children[0].clear();
+    };
+    CompositeRectTileLayer.prototype.addRect = function() {
+        var c = this.children[0];
+        return c.addRect.apply(c, arguments);
+    };
+    Object.defineProperty(CompositeRectTileLayer.prototype, "rects", {
+        configurable: true,
+        get: function() { return this.children[0].rects; }
+    });
+
+    RectTileLayer.prototype.clear = function() {
         this.rects.length = 0;
     };
 
+    /* MV hands over Bitmaps wrapped in PIXI.Textures. Reduce each to the
+       image or canvas underneath, which is what carries a native texture. */
     CompositeRectTileLayer.prototype.setBitmaps = function(bitmaps) {
+        this.children[0].setBitmaps(bitmaps);
+    };
+
+    RectTileLayer.prototype.setBitmaps = function(bitmaps) {
         this.textures = bitmaps || [];
+        this._images = this.textures.map(function(t) {
+            if (!t) return null;
+            if (t.baseTexture && t.baseTexture.resource) return t.baseTexture.resource;
+            return t.image || t.canvas || t;
+        });
+        this._texInfo = null;
+    };
+
+    /* Resolve images to native texture ids and sizes. Images decode
+       asynchronously, so this is retried while any are still missing. */
+    RectTileLayer.prototype._resolveTextures = function() {
+        var imgs = this._images || [];
+        var out = [];
+        var missing = false;
+        for (var i = 0; i < imgs.length; i++) {
+            var img = imgs[i];
+            var info = { glTexture: 0, width: 0, height: 0 };
+            if (img) {
+                if (img._glTextureId) {
+                    info.glTexture = img._glTextureId;
+                    info.width = img.naturalWidth || img.width || 0;
+                    info.height = img.naturalHeight || img.height || 0;
+                } else if (img._imageHandle !== undefined &&
+                           typeof __native_image !== "undefined") {
+                    var ni = __native_image.getImageInfo(img._imageHandle);
+                    if (ni) {
+                        info.glTexture = ni.glTexture || 0;
+                        info.width = ni.width || 0;
+                        info.height = ni.height || 0;
+                    }
+                } else if (img.width && img.height) {
+                    info.width = img.width;
+                    info.height = img.height;
+                }
+                if (info.glTexture === 0 &&
+                    (img.width > 0 || img._imageHandle !== undefined)) {
+                    missing = true;
+                }
+            }
+            out.push(info);
+        }
+        this._texInfo = out;
+        this._texMissing = missing;
+        return out;
+    };
+
+    RectTileLayer.prototype._render = function(renderer) {
+        var n = this.rects.length;
+        if (!n || !this.visible || this.worldAlpha <= 0) return;
+        if (typeof __native_tilemap === "undefined" ||
+            typeof __native_renderer === "undefined" ||
+            !__native_renderer._active) {
+            return;
+        }
+
+        var tex = this._texInfo;
+        if (!tex || this._texMissing) tex = this._resolveTextures();
+
+        /* MV flags a tile as animated and pixi-tilemap offsets its source rect
+           by the frame; the same offset is baked in here because the native
+           path takes finished coordinates. The step pattern (0,1,2,1 across
+           and 0,1,2 down) is the one ShaderTilemap._hackRenderer applies. */
+        var tilemap = null;
+        for (var p = this.parent; p; p = p.parent) {
+            if (p.tilemap) { tilemap = p.tilemap; break; }
+        }
+        var animX = 0, animY = 0;
+        if (tilemap) {
+            var af = (tilemap.animationFrame || 0) % 4;
+            if (af === 3) af = 1;
+            animX = af * (tilemap._tileWidth || 48);
+            animY = ((tilemap.animationFrame || 0) % 3) * (tilemap._tileHeight || 48);
+        }
+
+        var need = n * 7;
+        if (!this._buf || this._buf.length < need) {
+            this._buf = new Float32Array(need * 2);
+        }
+        var buf = this._buf, k = 0;
+        for (var i = 0; i < n; i++) {
+            var r = this.rects[i];
+            buf[k++] = r.texture;
+            buf[k++] = r.u + (r.animX ? animX : 0);
+            buf[k++] = r.v + (r.animY ? animY : 0);
+            buf[k++] = r.x;
+            buf[k++] = r.y;
+            buf[k++] = r.w;
+            buf[k++] = r.h;
+        }
+
+        var ids = [], ws = [], hs = [];
+        for (var j = 0; j < tex.length; j++) {
+            ids.push(tex[j].glTexture);
+            ws.push(tex[j].width);
+            hs.push(tex[j].height);
+        }
+
+        var wt = this.worldTransform;
+        __native_tilemap.drawTiles(buf.buffer, n, ids, ws, hs, tex.length,
+                                   wt ? wt.tx : 0, wt ? wt.ty : 0);
     };
 
     /* MV calls this once per visible tile. Source rect (u,v,tileWidth,
        tileHeight) out of texture `textureIndex`, placed at (x,y); the
        animation offsets are how MV scrolls animated water. */
-    CompositeRectTileLayer.prototype.addRect = function(textureIndex, u, v, x, y,
+    RectTileLayer.prototype.addRect = function(textureIndex, u, v, x, y,
                                                         tileWidth, tileHeight,
                                                         animX, animY) {
         this.rects.push({
