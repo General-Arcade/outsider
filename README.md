@@ -109,7 +109,7 @@ under a `__native_*` name.
 | | Graphics | Compiler | Notes |
 |---|---|---|---|
 | **Windows** 10/11 x64 | D3D12 | Visual Studio 2022 (MSVC) | GUI subsystem; the app manifest sets UTF-8 and per-monitor DPI |
-| **Linux** | Vulkan | GCC or Clang | X11 and Wayland |
+| **Linux** x64 and ARM64 | Vulkan | GCC or Clang | X11 and Wayland |
 | **macOS** (Apple Silicon and Intel) | Metal | Apple Clang (Xcode command line tools) | No OpenGL fallback — see below |
 
 Nothing beyond the platform's own graphics stack has to be installed or

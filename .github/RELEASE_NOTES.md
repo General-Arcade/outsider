@@ -1,4 +1,4 @@
-Prebuilt runtimes for Windows, macOS and Linux. Each archive holds the
+Prebuilt runtimes for Windows, macOS and Linux (x64 and ARM64). Each archive holds the
 `outsider` executable and the `shims/` directory it loads before the game;
 keep them together.
 
@@ -7,6 +7,7 @@ keep them together.
 | `outsider-*-windows-x64.zip` | Windows 10/11 x64 | D3D12 |
 | `outsider-*-macos-universal.tar.gz` | macOS 11+, Apple Silicon and Intel | Metal |
 | `outsider-*-linux-x64.tar.gz` | glibc 2.35+ (Ubuntu 22.04 and newer) | Vulkan |
+| `outsider-*-linux-arm64.tar.gz` | glibc 2.35+ on ARM64 (Raspberry Pi 5, Ampere, Apple Silicon VMs) | Vulkan |
 
 ## Running a game
 
