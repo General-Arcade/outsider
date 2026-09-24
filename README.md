@@ -112,6 +112,10 @@ under a `__native_*` name.
 | **Linux** x64 and ARM64 | Vulkan | GCC or Clang | X11 and Wayland |
 | **macOS** (Apple Silicon and Intel) | Metal | Apple Clang (Xcode command line tools) | No OpenGL fallback — see below |
 
+Android is experimental: with the NDK toolchain file the tree builds the
+runtime as `libmain.so` for an SDL3 activity (`-DANDROID_ABI=arm64-v8a`,
+GPU backend only), but no app project, touch input or packaging exists yet.
+
 Nothing beyond the platform's own graphics stack has to be installed or
 shipped: SDL reaches the Vulkan loader and `d3d12.dll`/`dxgi.dll` at run time,
 and Metal is part of macOS.
