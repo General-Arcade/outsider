@@ -13,6 +13,11 @@ endif()
 # Options
 include(CMakeDependentOption)
 option(RMMZ_BUILD_TESTS "Build tests" ON)
+# The tests are desktop executables; an Android build produces only the
+# runtime library.
+if(ANDROID)
+    set(RMMZ_BUILD_TESTS OFF)
+endif()
 option(RMMZ_WIN32_CONSOLE "Windows: build outsider as a console application instead of a GUI application" OFF)
 
 # Rendering backend. "gpu" targets SDL3's GPU API (Vulkan, D3D12 or Metal)
@@ -79,6 +84,9 @@ if(WIN32)
         _CRT_SECURE_NO_WARNINGS
         _CRT_NONSTDC_NO_WARNINGS
     )
+elseif(ANDROID)
+    # Bionic has pthread built in; log and android are for logcat and assets.
+    set(RMMZ_SYS_LIBS m log android)
 else()
     set(RMMZ_SYS_LIBS m pthread)
 endif()
@@ -100,8 +108,17 @@ set(RMMZ_DEFAULT_HEIGHT 624 CACHE STRING "Default window height")
 add_subdirectory(third_party)
 
 # Link OpenGL (the GL backend, and the tests, which build the headless
-# rendering sources)
-find_package(OpenGL REQUIRED)
+# rendering sources). Android has no desktop OpenGL: only the GPU backend
+# (Vulkan) is available there.
+if(ANDROID)
+    if(NOT RMMZ_RENDER_BACKEND STREQUAL "gpu")
+        message(FATAL_ERROR "Android supports only -DRMMZ_RENDER_BACKEND=gpu")
+    endif()
+    set(RMMZ_GL_LIB "")
+else()
+    find_package(OpenGL REQUIRED)
+    set(RMMZ_GL_LIB OpenGL::GL)
+endif()
 
 if(RMMZ_RENDER_BACKEND STREQUAL "gpu")
     set(RMMZ_RENDER_SOURCES
@@ -122,11 +139,12 @@ else()
 endif()
 
 # Main runtime sources
-add_executable(outsider
+set(RMMZ_RUNTIME_SOURCES
     src/main.c
     ${RMMZ_RENDER_SOURCES}
     src/platform/platform_sdl3.c
     src/platform/win_console.c
+    src/platform/android_support.c
     src/engine/js_engine.c
     src/engine/game_loop.c
     src/engine/error_handler.c
@@ -155,6 +173,15 @@ add_executable(outsider
     src/rendering/font_manager.c
     src/rendering/tilemap.c
 )
+
+if(ANDROID)
+    # SDLActivity loads libmain.so and calls its SDL_main, so on Android the
+    # runtime is a shared library rather than an executable.
+    add_library(outsider SHARED ${RMMZ_RUNTIME_SOURCES})
+    set_target_properties(outsider PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(outsider ${RMMZ_RUNTIME_SOURCES})
+endif()
 
 # Windows: embed an application manifest so the process uses the UTF-8 code
 # page (game directories with non-ASCII names work with narrow CRT calls) and
@@ -190,7 +217,7 @@ endif()
 
 target_link_libraries(outsider PRIVATE
     SDL3::SDL3
-    OpenGL::GL
+    ${RMMZ_GL_LIB}
     qjs
     soloud
     ${RMMZ_SYS_LIBS}
@@ -215,6 +242,7 @@ endif()
 # land in the same prefix and ship inside the archive.
 install(TARGETS outsider
     RUNTIME DESTINATION .
+    LIBRARY DESTINATION .
     COMPONENT runtime
 )
 

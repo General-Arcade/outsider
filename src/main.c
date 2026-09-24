@@ -31,6 +31,7 @@
 #include "rendering/filters.h"
 #include "io/file_io.h"
 #include "platform/win_console.h"
+#include "platform/android_support.h"
 
 #include <SDL3/SDL.h>
 /* SDL3 dropped the SDL2main library: including this header in the file that
@@ -81,6 +82,9 @@ static bool find_dir_next_to_exe(const char *name, char *out, size_t out_size)
 
 int main(int argc, char *argv[])
 {
+    /* Android: printf output is lost unless routed to logcat. No-op elsewhere. */
+    android_support_init_logging();
+
     /* Parse command-line arguments. */
     const char *game_dir = NULL;
     const char *shim_dir = "src/shims";
@@ -141,6 +145,22 @@ int main(int argc, char *argv[])
     if (!game_dir && find_dir_next_to_exe("game", default_game_dir, sizeof(default_game_dir))) {
         game_dir = default_game_dir;
     }
+#ifdef __ANDROID__
+    /* Android: the game lives in the app's external files directory
+       (<storage>/Android/data/<package>/files/game) and the shims are
+       unpacked there from the APK's assets on every launch. */
+    static char android_root[1024];
+    if (android_support_files_dir(android_root, sizeof(android_root))) {
+        if (!game_dir) {
+            snprintf(default_game_dir, sizeof(default_game_dir), "%s/game", android_root);
+            if (file_io_is_directory(default_game_dir)) game_dir = default_game_dir;
+        }
+        if (android_support_extract_shims(android_root, script_loader_shim_files())) {
+            snprintf(default_shim_dir, sizeof(default_shim_dir), "%s/shims", android_root);
+            shim_dir = default_shim_dir;
+        }
+    }
+#endif
     if (strcmp(shim_dir, "src/shims") == 0 && !file_io_is_directory(shim_dir)) {
         if (game_dir) {
             snprintf(default_shim_dir, sizeof(default_shim_dir), "%s/shims", game_dir);

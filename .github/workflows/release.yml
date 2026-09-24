@@ -28,6 +28,9 @@ jobs:
             os: windows-2022
           - name: linux-x64
             os: ubuntu-22.04
+          # GitHub's hosted ARM64 runner; same package list, same steps.
+          - name: linux-arm64
+            os: ubuntu-22.04-arm
           - name: macos-universal
             os: macos-14
 

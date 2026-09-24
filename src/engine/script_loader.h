@@ -35,6 +35,10 @@ bool script_loader_load_all(JSEngine *engine, const char *shim_dir, const char *
 /* Load only the shim files (for tests without game files). */
 bool script_loader_load_shims(JSEngine *engine, const char *shim_dir);
 
+/* NULL-terminated list of every shim file name the loader uses, in load
+   order (pre-core shims first, then post-core). */
+const char *const *script_loader_shim_files(void);
+
 /* Return the script paths load_all would load, without loading them.
    Free with script_loader_free_path_list(). */
 char **script_loader_get_load_order(const char *shim_dir, const char *game_dir, size_t *out_count);

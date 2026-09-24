@@ -7,8 +7,14 @@ FetchContent_Declare(
     GIT_TAG        release-3.4.16
     GIT_SHALLOW    TRUE
 )
-set(SDL_SHARED OFF CACHE BOOL "" FORCE)
-set(SDL_STATIC ON CACHE BOOL "" FORCE)
+if(ANDROID)
+    # SDLActivity loads libSDL3.so through JNI, so SDL must be shared there.
+    set(SDL_SHARED ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+else()
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+endif()
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
 # XTest only synthesises input for SDL's own tests; SDL treats its absence as

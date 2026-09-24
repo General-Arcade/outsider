@@ -295,6 +295,20 @@ static const char *POST_CORE_SHIMS[] = {
     NULL
 };
 
+const char *const *script_loader_shim_files(void)
+{
+    static const char *all[32];
+    static bool built = false;
+    if (!built) {
+        int n = 0;
+        for (int i = 0; SHIM_FILES[i] && n < 31; i++) all[n++] = SHIM_FILES[i];
+        for (int i = 0; POST_CORE_SHIMS[i] && n < 31; i++) all[n++] = POST_CORE_SHIMS[i];
+        all[n] = NULL;
+        built = true;
+    }
+    return all;
+}
+
 /* Library scripts loaded before core. */
 static const char *LIB_SCRIPTS[] = {
     "js/libs/pako.min.js",

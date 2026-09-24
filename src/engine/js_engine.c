@@ -44,7 +44,13 @@ struct JSEngine {
 static uint64_t monotonic_ms(void)
 {
     struct timespec ts;
+#ifdef _WIN32
     timespec_get(&ts, TIME_UTC);
+#else
+    /* timespec_get() only reached Android in API 29; clock_gettime() is
+       everywhere and monotonic is what a watchdog wants anyway. */
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+#endif
     return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
 }
 
